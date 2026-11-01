@@ -823,6 +823,15 @@ class OneGuardWindow(QMainWindow):
     def _complete(self, payload: dict) -> None:
         """Finalize UI controls and show real core status, even when cancelled."""
         self._completion_seen = True
+        # The final summary is authoritative if intermediate progress messages
+        # were dropped to keep the bounded event queue responsive.
+        final_scanned = int(payload.get("scanned", 0))
+        self.scanned_tile.set_count(final_scanned)
+        self.scan_clock.set_processed(final_scanned)
+        self.error_tile.set_count(int(payload.get("errors", self._current_error_count)))
+        summary = self.controller.last_summary
+        if summary is not None:
+            self.threats_tile.set_count(len(summary.findings))
         self.scan_clock.finish()
         self._phase_finished_at = monotonic()
         self._update_scan_metrics(force=True)

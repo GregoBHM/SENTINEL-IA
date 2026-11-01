@@ -188,6 +188,7 @@ class OneGuardWindow(QMainWindow):
         self.controller = ScanController(self.config)
         self.scan_clock = ScanClock()
         self._last_clock_refresh = 0.0
+        self._phase_started_at = monotonic()
         self.session_id: str | None = None
         self.vt_key = ""
         self.mb_key = ""
@@ -377,6 +378,8 @@ class OneGuardWindow(QMainWindow):
         timing.addStretch()
         timing.addWidget(self.rate_label)
         work_layout.addLayout(timing)
+        self.phase_time_label = label("Fase en curso  00:00")
+        work_layout.addWidget(self.phase_time_label)
         self.global_label = label("Progreso global · aún no disponible")
         work_layout.addWidget(self.global_label)
         self.global_progress = QProgressBar()
@@ -643,6 +646,8 @@ class OneGuardWindow(QMainWindow):
         self._last_clock_refresh = 0.0
         self.elapsed_label.setText("Transcurrido  00:00")
         self.rate_label.setText("Ritmo observado  — archivos/s")
+        self._phase_started_at = monotonic()
+        self.phase_time_label.setText("Fase en curso  00:00")
         self.phase_label.setText("Trabajo identificado · 0 / 0 (total dinámico)")
         self.scan_phase.setText("Preparando motores de detección")
         self.scan_status.setText("Preparando análisis…")
@@ -729,6 +734,10 @@ class OneGuardWindow(QMainWindow):
             if observed.active_seconds >= 1.0 else
             "Ritmo observado  calculando…"
         )
+        phase_elapsed = max(0.0, now - self._phase_started_at)
+        self.phase_time_label.setText(
+            f"Fase en curso  {format_duration(phase_elapsed)}"
+        )
 
     def _apply_event(self, event: ScanEvent) -> None:
         """Apply one immutable core event on the GUI thread only."""
@@ -740,6 +749,7 @@ class OneGuardWindow(QMainWindow):
             self.pause_button.setEnabled(True)
             self._log("INFO", "Sesión " + self.session_id[:12] + " iniciada")
         elif kind == "phase":
+            self._phase_started_at = monotonic()
             self.scan_phase.setText(payload["name"])
             self._log("INFO", payload["name"])
         elif kind == "warning":
@@ -747,7 +757,9 @@ class OneGuardWindow(QMainWindow):
             self.partial_tile.set_count(self._seen_warnings)
             self._log("WARN", payload.get("message", "Cobertura parcial"))
         elif kind == "current_target":
-            self.current_target.setText("OBJETIVO ACTUAL   " + payload.get("path", ""))
+            self.current_target.setText(
+                "ÚLTIMO OBJETIVO ENVIADO A LA COLA   " + payload.get("path", "")
+            )
         elif kind == "finding":
             self._found += 1
             self.threats_tile.set_count(self._found)

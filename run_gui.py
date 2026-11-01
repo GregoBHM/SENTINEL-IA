@@ -17,6 +17,7 @@ def smoke_test(report_path: Path, application: object) -> int:
     binary. It never runs engines, opens the network or performs remediation.
     """
     from app.config import ScanConfig
+    from db.database import SQLiteStore
     from ui.branding import logo_path, icon_path
     from ui.window import OneGuardWindow
 
@@ -24,6 +25,7 @@ def smoke_test(report_path: Path, application: object) -> int:
               "window": False, "icon": False, "rules": False}
     with tempfile.TemporaryDirectory(prefix="oneguard-smoke-") as work:
         config = ScanConfig(database_path=Path(work) / "test.db")
+        SQLiteStore(config.database_path)  # Check the SQL bootstrap used by real scans.
         result["icon"] = icon_path().is_file() and logo_path().is_file()
         result["rules"] = any(config.rule_directory.glob("*.yar"))
         result["qt"] = application is not None

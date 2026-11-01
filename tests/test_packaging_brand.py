@@ -44,6 +44,7 @@ def test_packager_includes_assets_and_rules() -> None:
     spec = (ROOT / 'build.spec').read_text(encoding='utf-8')
     assert "'assets'" in spec
     assert "'rules/bundled'" in spec
+    assert "(str(root / 'db' / 'schema.sql'), 'db')" in spec
     assert 'uac_admin=' in spec
     assert 'console=False' in spec
     assert "SentinelOneGuard.ico" in spec

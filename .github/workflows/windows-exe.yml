@@ -1,0 +1,30 @@
+name: Build branded Windows executable
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Install Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - name: Install, test and build branded EXE
+        shell: pwsh
+        run: .\build_windows.ps1
+      - name: Upload executable and hash
+        uses: actions/upload-artifact@v4
+        with:
+          name: SentinelOneGuard-Windows-EXE
+          path: |
+            dist/SentinelOneGuard.exe
+            dist/SentinelOneGuard.sha256.txt
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,41 @@
+SENTINEL ONEGUARD - ENTREGA FINAL DE CODIGO v0.6.0
+================================================
+
+ESTA ENTREGA NO CONTIENE UN EXE DE WINDOWS YA COMPILADO.
+Contiene el proyecto, el logotipo, las pruebas y el compilador.
+
+PASOS PARA GENERAR SentinelOneGuard.exe EN WINDOWS 10/11:
+
+1) Extrae el ZIP en una carpeta de Windows.
+2) Instala Python 3.11 de 64 bits (y el Python Launcher "py").
+3) Abre la carpeta SentinelOneGuard.
+4) Haz doble clic en COMPILAR_EXE_WINDOWS.cmd.
+5) Si la instalación, los tests, la compilación y la verificación
+   terminan correctamente, obtendrás dist\SentinelOneGuard.exe.
+6) Para comprobar el icono, UAC y SHA-256 sin iniciar el programa:
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\VERIFICAR_EXE_WINDOWS.ps1
+
+ALTERNATIVA: subir el proyecto a tu repositorio privado de GitHub
+(no subir claves ni datos personales) y ejecutar manualmente el workflow
+"Build branded Windows executable" desde Actions.
+
+ESTADO Y PRECAUCIONES:
+- Verificaciones disponibles en Linux: 84 tests aprobados, 4 omitidos.
+- No se ha verificado el EXE, GUI nativa, UAC ni ACL en Windows.
+- Las funciones de mitigación son EXPERIMENTALES: prueba exclusivamente
+  en máquina virtual/snapshot hasta validarlas en Windows.
+- No deshabilites Microsoft Defender. Un resultado sin hallazgos no
+  garantiza que Windows esté limpio.
+- Las reglas incluidas son de prueba, no una base de firmas de producción.
+- El EXE, cuando se compile, NO estará firmado digitalmente.
+
+DOCS: README.md, RELEASE_NOTES.md, docs/BUILD_WINDOWS.md
+
+
+HOTFIX COMPILACION 2026-11-01
+- No es obligatorio disponer del comando py: ahora se detecta python/python3 o instalaciones de python.org sin PATH.
+- Se requiere Python 3.11+ de 64 bits, conexion para instalar dependencias y Windows 10/11.
+- Comprobar en PowerShell: python --version; Get-Command python,py -ErrorAction SilentlyContinue
+- Si falta Python: winget install --id Python.Python.3.11 --exact
+- Cerrar y volver a abrir la terminal tras instalarlo; ejecutar COMPILAR_EXE_WINDOWS.cmd.
+- Si aparece un error de .venv, renombrar la carpeta .venv anterior y repetir.

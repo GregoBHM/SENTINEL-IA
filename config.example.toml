@@ -1,0 +1,19 @@
+# Copiar a config.toml y usar con `python main.py --config config.toml scan ...`
+# Nunca almacenar claves de VirusTotal o MalwareBazaar en este archivo.
+[scanner]
+max_workers = 3
+max_pending = 12
+yara_max_file_size_mb = 64
+yara_timeout_seconds = 20
+pe_max_file_size_mb = 128
+script_max_bytes_mb = 2
+archive_max_depth = 3
+archive_max_entries = 10000
+archive_max_total_bytes_mb = 64
+archive_max_member_bytes_mb = 8
+archive_timeout_seconds = 60
+exclusions = []
+
+[paths]
+# database = "C:/Users/Public/OneGuard/data/oneguard.db"
+# rules = "C:/ProgramData/OneGuard/rules"

@@ -1,0 +1,16 @@
+{
+  "product": "Sentinel OneGuard",
+  "source_version": "0.6.0",
+  "release_type": "fuentes y build reproducible; NO EXE compilado",
+  "validation_date_utc": "2026-11-01T14:47:28.241012+00:00",
+  "validation_os": "Linux",
+  "pytest_passed": 84,
+  "pytest_skipped": 4,
+  "pytest_failed": 0,
+  "compileall": "pass",
+  "cli_synthetic_hash_end_to_end": "pass",
+  "windows_exe_build": "not_run_no_windows",
+  "windows_gui_uac_acl_native": "not_run_no_windows",
+  "production_antimalware_certified": false,
+  "mitigation_validated_windows": false
+}

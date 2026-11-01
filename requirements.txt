@@ -1,0 +1,10 @@
+# Core uses only the Python 3.11+ standard library.
+requests>=2.31,<3
+# Native YARA binding; required unless scanning with --no-yara.
+yara-python>=4.4,<5
+# Phase 3: PE, process enumeration and archive formats.
+pefile>=2023.2.7,<2030
+psutil>=5.9,<9
+rarfile>=4.1,<6
+py7zr>=0.20,<2
+oletools>=0.60,<1

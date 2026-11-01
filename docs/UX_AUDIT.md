@@ -66,8 +66,9 @@ y controles para limpiar información sensible.
 **Causa confirmada del fallo reportado:** `db/database.py` lee `db/schema.sql`
 pero `build.spec` no lo incluía en el bundle one-file de PyInstaller.
 **Aplicado:** copiar `db/schema.sql` al destino `db` dentro del paquete;
-inicializar SQLite en el smoke test de Qt; prueba estática del manifest; validación
-Windows por PR. El instalador debe reconstruirse para incorporar el arreglo.
+inicializar SQLite en el smoke test de Qt; prueba estática del manifest;
+inspección del CArchive del EXE para comprobar esquema, marca y reglas;
+validación Windows por PR. El instalador debe reconstruirse para incorporar el arreglo.
 **Pendiente:** validar en runner Windows el `.exe` completo (incluido PyInstaller);
 analizar los logs si falla. Los tests en Linux no validan Win32 UAC/ACL.
 

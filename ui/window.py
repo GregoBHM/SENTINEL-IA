@@ -287,39 +287,56 @@ class OneGuardWindow(QMainWindow):
             self.refresh_quarantine()
 
     def _setup_home(self) -> None:
-        """Show a distinct quiet command centre instead of fictional health claims."""
+        """Provide action-first navigation without pretending the device is safe."""
         page, column = vertical_page()
-        column.addWidget(label("CENTRO DE INVESTIGACIÓN", "Eyebrow"))
-        column.addWidget(label("Descubre qué ocurre en tu Windows.", "Title"))
+        column.addWidget(label("CENTRO DE SEGURIDAD  /  SENTINEL ONEGUARD", "Eyebrow"))
+        column.addWidget(label("Investiga antes de actuar.", "Title"))
         column.addWidget(label(
-            "Analiza archivos, procesos y persistencia; interpreta las evidencias y "
-            "decide los siguientes pasos. No se modifica ningún objeto sin tu autorización."))
-        hero_layout = QVBoxLayout()
-        hero_layout.addWidget(label("UN DIAGNÓSTICO QUE EXPLICA", "Eyebrow"))
-        hero_layout.addWidget(label("No basta con encontrar un archivo sospechoso.", "Heading"))
-        hero_layout.addWidget(label(
-            "OneGuard relaciona los indicadores disponibles para ayudar a investigar "
-            "la causa probable de una infección. No garantiza detectar toda amenaza "
-            "ni demostrar el punto de entrada sin registros históricos."))
-        start = QPushButton("Configurar nuevo análisis    →")
-        start.setObjectName("Primary")
-        start.clicked.connect(self.open_wizard)
-        hero_layout.addWidget(start, alignment=Qt.AlignmentFlag.AlignLeft)
-        column.addWidget(panel(hero_layout, "Hero"))
-        synopsis = QHBoxLayout()
-        for heading, details in (
-            ("01 / INSPECCIONAR", "Hashes, YARA, ejecutables PE, scripts y comprimidos."),
-            ("02 / CORRELACIONAR", "Procesos y persistencia con relaciones respaldadas por evidencia."),
-            ("03 / EXPLICAR", "Severidad, confianza, motores y límites de cada resultado."),
+            "Escanea, compara evidencias y elige acciones de respuesta. "
+            "Un resultado sin detecciones nunca certifica que Windows esté limpio."
+        ))
+
+        overview = QVBoxLayout()
+        overview.addWidget(label("ÚLTIMA EVALUACIÓN", "Eyebrow"))
+        self.home_status = label("Todavía no se ha evaluado este equipo.", "SectionHeading")
+        self.home_last_scan = label(
+            "Inicia un análisis para registrar hallazgos, errores y cobertura real."
+        )
+        overview.addWidget(self.home_status)
+        overview.addWidget(self.home_last_scan)
+        column.addWidget(panel(overview, "Hero"))
+
+        column.addWidget(label("ELIGE CÓMO INSPECCIONAR", "Eyebrow"))
+        options = QHBoxLayout()
+        for kind, heading, detail in (
+            ("quick", "Rápido", "Ubicaciones frecuentes y carpetas críticas del usuario."),
+            ("full", "Completo", "Unidades fijas locales; duración variable."),
+            ("custom", "Personalizado", "Selecciona archivos o carpetas concretas."),
         ):
-            block = QVBoxLayout()
-            block.addWidget(label(heading, "Eyebrow"))
-            block.addWidget(label(details))
-            synopsis.addWidget(panel(block), 1)
-        column.addLayout(synopsis)
-        column.addWidget(label(
-            "Fase 5: las acciones permitidas requieren confirmación y pueden estar limitadas "
-            "por la ruta, identidad y cobertura del análisis. No sustituye Microsoft Defender."))
+            contents = QVBoxLayout()
+            contents.addWidget(label(heading.upper(), "Eyebrow"))
+            contents.addWidget(label(heading, "Heading"))
+            contents.addWidget(label(detail))
+            contents.addStretch()
+            button = QPushButton("Configurar análisis")
+            button.setObjectName("Primary" if kind == "quick" else "ScanAction")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, selected=kind: self._open_with_profile(selected)
+            )
+            contents.addWidget(button)
+            options.addWidget(panel(contents), 1)
+        column.addLayout(options)
+
+        foot = QHBoxLayout()
+        foot.addWidget(label(
+            "DETECTAR → INVESTIGAR → REVISAR → MITIGAR  ·  "
+            "Nada se elimina sin aprobación.", "Eyebrow"
+        ), 1)
+        history = QPushButton("Consultar historial")
+        history.clicked.connect(lambda: self._switch_page(4))
+        foot.addWidget(history)
+        column.addLayout(foot)
         column.addStretch()
         self.pages.removeWidget(self.pages.widget(0))
         self.pages.insertWidget(0, page)
@@ -575,11 +592,19 @@ class OneGuardWindow(QMainWindow):
         QMessageBox.information(self, "Configuración", "Claves aplicadas en memoria para esta ejecución.")
 
     def open_wizard(self) -> None:
-        """Require opt-in before invoking any scanner engine."""
+        """Open the standard opt-in scan wizard."""
+        self._open_with_profile("quick")
+
+    def _open_with_profile(self, profile: str) -> None:
+        """Preselect one scan type while still requiring all user permissions."""
         if self.controller.running:
             QMessageBox.information(self, "Escaneo activo", "Cancela o termina el análisis actual antes de iniciar otro.")
             return
         wizard = ConsentWizard(self)
+        profile_buttons = {
+            "quick": wizard.quick, "full": wizard.full, "custom": wizard.custom,
+        }
+        profile_buttons.get(profile, wizard.quick).setChecked(True)
         if wizard.exec() != ConsentWizard.DialogCode.Accepted or not wizard.plan:
             return
         self._prepare_live_scan()
@@ -915,6 +940,25 @@ class OneGuardWindow(QMainWindow):
         except (sqlite3.Error, OSError):
             return
         self.history_table.setRowCount(len(sessions))
+        if sessions:
+            latest = sessions[0]
+            state = {
+                "completed": "Finalizado (revisar cobertura)",
+                "cancelled": "Cancelado · cobertura parcial",
+                "failed": "Falló · diagnóstico no concluyente",
+                "running": "Interrumpido o todavía en curso",
+            }.get(latest.status, latest.status)
+            self.home_status.setText(f"Último análisis: {state}")
+            self.home_last_scan.setText(
+                f"{latest.started[:19].replace('T', ' ')} · "
+                f"{latest.scanned:,} archivos · {latest.finding_files} objetivos con hallazgos · "
+                f"{latest.errors} errores".replace(",", ".")
+            )
+        else:
+            self.home_status.setText("Todavía no se ha evaluado este equipo.")
+            self.home_last_scan.setText(
+                "Inicia un análisis; no se ha confirmado la seguridad del sistema."
+            )
         for row_index, record in enumerate(sessions):
             try:
                 duration = (format_duration(

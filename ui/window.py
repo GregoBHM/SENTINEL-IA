@@ -149,6 +149,17 @@ class FindingFilter(QSortFilterProxyModel):
                              " ".join(record.engines))).lower()
         return self.search.lower() in combined
 
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
+        """Sort risk numerically and other columns by readable text."""
+        source = self.sourceModel()
+        if source is None:
+            return False
+        if left.column() == 0:
+            return source.rows[left.row()].score < source.rows[right.row()].score
+        a = str(source.data(left, Qt.ItemDataRole.DisplayRole) or "").casefold()
+        b = str(source.data(right, Qt.ItemDataRole.DisplayRole) or "").casefold()
+        return a < b
+
     def update_filters(self, severity: str, threat_type: str, search: str) -> None:
         """Update model filtering without costly independent SQL queries."""
         self.severity = severity
@@ -469,7 +480,9 @@ class OneGuardWindow(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(37)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setSortingEnabled(False)
+        self.proxy.setDynamicSortFilter(True)
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(0, Qt.SortOrder.DescendingOrder)
         self.table.setColumnWidth(0, 112)
         self.table.setColumnWidth(1, 340)
         self.table.setColumnWidth(2, 170)

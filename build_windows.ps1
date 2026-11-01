@@ -14,17 +14,17 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Set-Location -LiteralPath $PSScriptRoot
 
-$probeCode = 'import sys,struct; print("%d.%d;%d" % (sys.version_info.major, sys.version_info.minor, struct.calcsize("P")*8))'
+# Avoid double-quoted literals in python -c: Windows PowerShell 5.1 may strip
+# their quotes when forwarding native command arguments.
+$probeCode = 'import sys; print(int(sys.version_info[0] == 3 and sys.version_info[1] >= 11 and sys.maxsize > 2**32))'
 
 function Test-PythonVersion {
     param([string]$Executable, [string[]]$LauncherArguments)
     try {
         $output = & $Executable @LauncherArguments -c $probeCode 2>$null
         if ($LASTEXITCODE -ne 0) { return $false }
-        $versionText = (@($output) -join '').Trim()
-        $versionMatch = [regex]::Match($versionText, '^3\.(\d+);64$')
-        if (-not $versionMatch.Success) { return $false }
-        return ([int]$versionMatch.Groups[1].Value -ge 11)
+        $probeResult = (@($output) -join '').Trim()
+        return ($probeResult -eq '1')
     }
     catch { return $false }
 }

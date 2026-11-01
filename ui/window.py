@@ -629,6 +629,8 @@ class OneGuardWindow(QMainWindow):
         self._view_mode = "live"
         self._display_session_id = None
         self.session_id = None
+        self._show_rows([])
+        self.results_caption.setText("Análisis en preparación · todavía no hay resultados.")
         self.scanned_tile.set_count(0)
         self.threats_tile.set_count(0)
         self.partial_tile.set_count(0)
@@ -750,7 +752,10 @@ class OneGuardWindow(QMainWindow):
             self._found += 1
             self.threats_tile.set_count(self._found)
             self._event_counter += 1
-            self._log("FIND", f"{payload.get('severity', '').upper()} · {payload.get('type')} · {payload.get('target')}")
+            severity = str(payload.get("severity", "info")).lower()
+            level = ("FIND" if severity in ("critical", "high") else
+                     "WARN" if severity in ("medium", "low") else "INFO")
+            self._log(level, f"{severity.upper()} · {payload.get('type')} · {payload.get('target')}")
         elif kind == "skipped":
             self._seen_warnings += 1
             self.partial_tile.set_count(self._seen_warnings)
@@ -814,8 +819,11 @@ class OneGuardWindow(QMainWindow):
         self._log("OK" if status == "completed" else "WARN", self.scan_status.text())
         self._refresh_findings_safely()
         self.refresh_history()
-        if self.session_id:
-            self.results_caption.setText(f"Sesión {self.session_id[:12]} · {status} · resultados locales")
+        if self.session_id and self._last_fetch_count == 0:
+            self.results_caption.setText(
+                f"Sesión {self.session_id[:12]} · sin hallazgos visibles. "
+                "Revisa cobertura, advertencias y errores; no equivale a equipo limpio."
+            )
         # Never redirect failed initialization to an empty results table.
         if self.session_id and status in ("completed", "cancelled"):
             self._switch_page(2)

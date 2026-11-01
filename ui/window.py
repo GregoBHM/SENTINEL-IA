@@ -189,6 +189,7 @@ class OneGuardWindow(QMainWindow):
         self.scan_clock = ScanClock()
         self._last_clock_refresh = 0.0
         self._phase_started_at = monotonic()
+        self._phase_finished_at: float | None = None
         self.session_id: str | None = None
         self.vt_key = ""
         self.mb_key = ""
@@ -647,6 +648,7 @@ class OneGuardWindow(QMainWindow):
         self.elapsed_label.setText("Transcurrido  00:00")
         self.rate_label.setText("Ritmo observado  — archivos/s")
         self._phase_started_at = monotonic()
+        self._phase_finished_at = None
         self.phase_time_label.setText("Fase en curso  00:00")
         self.phase_label.setText("Trabajo identificado · 0 / 0 (total dinámico)")
         self.scan_phase.setText("Preparando motores de detección")
@@ -734,7 +736,8 @@ class OneGuardWindow(QMainWindow):
             if observed.active_seconds >= 1.0 else
             "Ritmo observado  calculando…"
         )
-        phase_elapsed = max(0.0, now - self._phase_started_at)
+        phase_end = self._phase_finished_at if self._phase_finished_at is not None else now
+        phase_elapsed = max(0.0, phase_end - self._phase_started_at)
         self.phase_time_label.setText(
             f"Fase en curso  {format_duration(phase_elapsed)}"
         )
@@ -808,6 +811,7 @@ class OneGuardWindow(QMainWindow):
         """Finalize UI controls and show real core status, even when cancelled."""
         self._completion_seen = True
         self.scan_clock.finish()
+        self._phase_finished_at = monotonic()
         self._update_scan_metrics(force=True)
         self._display_session_id = self.session_id
         status = str(payload.get("status", "failed"))

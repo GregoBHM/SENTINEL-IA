@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 from queue import Queue
 from datetime import datetime
+from time import monotonic
 from queue import Empty
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from app.config import ScanConfig
 from core.models import ScanEvent
+from core.scan_clock import ScanClock, format_duration
 from core.quarantine import QuarantineService
 from core.report import ReportService
 from core.recovery_guidance import guidance_for
@@ -184,6 +186,8 @@ class OneGuardWindow(QMainWindow):
         self.config = config or ScanConfig()
         self.repository = HistoryRepository(self.config.database_path)
         self.controller = ScanController(self.config)
+        self.scan_clock = ScanClock()
+        self._last_clock_refresh = 0.0
         self.session_id: str | None = None
         self.vt_key = ""
         self.mb_key = ""
@@ -349,6 +353,13 @@ class OneGuardWindow(QMainWindow):
         self.scan_phase = label("Preparado para iniciar")
         self.scan_phase.setObjectName("SectionHeading")
         work_layout.addWidget(self.scan_phase)
+        timing = QHBoxLayout()
+        self.elapsed_label = label("Transcurrido  00:00", "Eyebrow")
+        self.rate_label = label("Ritmo observado  — archivos/s", "Eyebrow")
+        timing.addWidget(self.elapsed_label)
+        timing.addStretch()
+        timing.addWidget(self.rate_label)
+        work_layout.addLayout(timing)
         self.global_label = label("Progreso global · aún no disponible")
         work_layout.addWidget(self.global_label)
         self.global_progress = QProgressBar()
@@ -505,9 +516,9 @@ class OneGuardWindow(QMainWindow):
         column.addWidget(label("HISTORIAL LOCAL", "Eyebrow"))
         column.addWidget(label("Análisis anteriores", "Title"))
         column.addWidget(label("La base de datos se mantiene en tu equipo. Doble clic para revisar hallazgos."))
-        self.history_table = QTableWidget(0, 6)
+        self.history_table = QTableWidget(0, 7)
         self.history_table.setHorizontalHeaderLabels([
-            "Inicio", "Estado", "Archivos", "Objetivos con hallazgos", "Errores", "ID",
+            "Inicio", "Duración", "Estado", "Archivos", "Hallazgos", "Errores", "ID",
         ])
         self.history_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.history_table.horizontalHeader().setStretchLastSection(True)
@@ -600,8 +611,12 @@ class OneGuardWindow(QMainWindow):
         self.global_progress.setRange(0, 0)
         self.phase_progress.setRange(0, 100)
         self.phase_progress.setValue(0)
-        self.global_label.setText("Progreso global: descubriendo objetivos (indeterminado)")
-        self.phase_label.setText("Tareas conocidas · 0 / 0")
+        self.global_label.setText("Descubriendo objetivos · tiempo restante no estimable")
+        self.scan_clock.reset()
+        self._last_clock_refresh = 0.0
+        self.elapsed_label.setText("Transcurrido  00:00")
+        self.rate_label.setText("Ritmo observado  — archivos/s")
+        self.phase_label.setText("Trabajo identificado · 0 / 0 (total dinámico)")
         self.scan_phase.setText("Preparando motores de detección")
         self.scan_status.setText("Preparando análisis…")
         self.console.clear()
@@ -666,6 +681,27 @@ class OneGuardWindow(QMainWindow):
                 self._last_refresh_at = now
                 self._event_counter = 0
                 self._refresh_findings_safely()
+        self._update_scan_metrics()
+
+    def _update_scan_metrics(self, *, force: bool = False) -> None:
+        """Display observed elapsed time and throughput; never predict an ETA."""
+        if not self.controller.running and not self._completion_seen:
+            return
+        now = monotonic()
+        if not force and now - self._last_clock_refresh < 0.75:
+            return
+        self._last_clock_refresh = now
+        observed = self.scan_clock.snapshot()
+        self.elapsed_label.setText(
+            f"Transcurrido  {format_duration(observed.elapsed_seconds)}"
+            + (f" · pausa {format_duration(observed.paused_seconds)}"
+               if observed.paused_seconds > 0 else "")
+        )
+        self.rate_label.setText(
+            f"Ritmo observado  {observed.files_per_second:.1f} archivos/s"
+            if observed.active_seconds >= 1.0 else
+            "Ritmo observado  calculando…"
+        )
 
     def _apply_event(self, event: ScanEvent) -> None:
         """Apply one immutable core event on the GUI thread only."""
@@ -703,14 +739,20 @@ class OneGuardWindow(QMainWindow):
             done = int(payload.get("scanned", 0)) + int(payload.get("system_scanned", 0))
             known = int(payload.get("discovered", 0)) + int(payload.get("system_scanned", 0))
             self.scanned_tile.set_count(int(payload.get("scanned", 0)))
-            self.phase_label.setText(f"Objetivos conocidos · {done:,} / {known:,}".replace(",", "."))
+            self.scan_clock.set_processed(int(payload.get("scanned", 0)))
+            self.phase_label.setText(
+                f"Trabajo conocido · {done:,} / {known:,} (puede aumentar)"
+                .replace(",", ".")
+            )
             self.phase_progress.setRange(0, 100)
             # This is only a known-work indicator, not a global percentage.
             self.phase_progress.setValue(min(99, round(done / known * 100)) if known else 0)
         elif kind == "paused":
+            self.scan_clock.pause()
             self.scan_status.setText("Pausado (trabajos en curso pueden finalizar)")
             self._log("WARN", "Pausa cooperativa solicitada")
         elif kind == "resumed":
+            self.scan_clock.resume()
             self.scan_status.setText("Analizando")
             self._log("INFO", "Análisis reanudado")
         elif kind == "cancelling":
@@ -723,11 +765,17 @@ class OneGuardWindow(QMainWindow):
     def _complete(self, payload: dict) -> None:
         """Finalize UI controls and show real core status, even when cancelled."""
         self._completion_seen = True
+        self.scan_clock.finish()
+        self._update_scan_metrics(force=True)
         self._display_session_id = self.session_id
         status = str(payload.get("status", "failed"))
         self.global_progress.setRange(0, 100)
         self.global_progress.setValue(100 if status == "completed" else 0)
-        self.global_label.setText("Análisis finalizado" if status == "completed" else f"Análisis {status}; cobertura incompleta")
+        self.global_label.setText(
+            "Análisis terminado · comprobar archivos omitidos y advertencias"
+            if status == "completed" else
+            "Análisis interrumpido · cobertura incompleta; revisar registro"
+        )
         self.phase_progress.setValue(100 if status == "completed" else self.phase_progress.value())
         self.scan_status.setText({
             "completed": "Análisis terminado · revisar cobertura y evidencias",
@@ -743,7 +791,11 @@ class OneGuardWindow(QMainWindow):
         self.refresh_history()
         if self.session_id:
             self.results_caption.setText(f"Sesión {self.session_id[:12]} · {status} · resultados locales")
-        self._switch_page(2)
+        # Never redirect failed initialization to an empty results table.
+        if self.session_id and status in ("completed", "cancelled"):
+            self._switch_page(2)
+        else:
+            self._switch_page(1)
 
     def _refresh_findings_safely(self) -> None:
         """Fetch a bounded SQLite page; report lock problems without freezing UI."""
@@ -774,9 +826,13 @@ class OneGuardWindow(QMainWindow):
         self.type_filter.setCurrentIndex(index if index >= 0 else 0)
         self.type_filter.blockSignals(False)
         self._update_filter()
+        actionable = [r for r in rows if not r.suppressed and r.score >= 20]
+        severe = sum(r.severity in {"critical", "high"} for r in actionable)
         self.results_caption.setText(
-            f"{len(rows)} hallazgo(s) guardado(s), máximo 2.500 visibles. "
-            "Severidad ≠ certeza; revisar las evidencias.")
+            f"{len(rows)} hallazgos visibles · {severe} altos/críticos · "
+            f"{len(actionable)} requieren revisión. "
+            "Sin hallazgos no equivale a un equipo limpio."
+        )
 
     def _update_filter(self, *_args) -> None:
         """Apply active filters to the bounded in-memory table model."""
@@ -860,9 +916,17 @@ class OneGuardWindow(QMainWindow):
             return
         self.history_table.setRowCount(len(sessions))
         for row_index, record in enumerate(sessions):
+            try:
+                duration = (format_duration(
+                    (datetime.fromisoformat(record.finished)
+                     - datetime.fromisoformat(record.started)).total_seconds()
+                ) if record.finished else "En curso")
+            except ValueError:
+                duration = "No disponible"
             items = (
-                record.started[:19].replace("T", " "), record.status,
-                str(record.scanned), str(record.finding_files), str(record.errors), record.id,
+                record.started[:19].replace("T", " "), duration, record.status,
+                str(record.scanned), str(record.finding_files),
+                str(record.errors), record.id,
             )
             for column, value in enumerate(items):
                 item = QTableWidgetItem(value)
@@ -871,7 +935,7 @@ class OneGuardWindow(QMainWindow):
 
     def open_historical_scan(self, index: QModelIndex) -> None:
         """Inspect one previous session without re-running any detection."""
-        item = self.history_table.item(index.row(), 5)
+        item = self.history_table.item(index.row(), 6)
         if not item:
             return
         session_id = item.text()

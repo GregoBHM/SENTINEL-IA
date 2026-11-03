@@ -280,7 +280,7 @@ class OneGuardWindow(QMainWindow):
             self.nav_buttons.append(item)
         side.addStretch()
         note = QVBoxLayout()
-        note.addWidget(label("ESTADO DEL EQUIPO", "Eyebrow", wrap=False))
+        note.addWidget(label("ESTADO", "Eyebrow", wrap=False))
         self.sidebar_status = label("Sin evaluación reciente.")
         self.sidebar_status.setToolTip(
             "Un resultado sin hallazgos no certifica que Windows esté limpio."

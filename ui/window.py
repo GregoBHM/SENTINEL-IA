@@ -1064,13 +1064,16 @@ class OneGuardWindow(QMainWindow):
             self.phase_progress.setValue(min(99, round(done / known * 100)) if known else 0)
         elif kind == "paused":
             self.scan_clock.pause()
+            self.eta_label.setText("Tiempo restante · en pausa")
             self.scan_status.setText("Pausado (trabajos en curso pueden finalizar)")
             self._log("WARN", "Pausa cooperativa solicitada")
         elif kind == "resumed":
             self.scan_clock.resume()
+            self.eta_label.setText("Tiempo restante · recalculando")
             self.scan_status.setText("Analizando")
             self._log("INFO", "Análisis reanudado")
         elif kind == "cancelling":
+            self.eta_label.setText("Tiempo restante · cancelación en curso")
             self.scan_status.setText("Cancelando operaciones")
         elif kind == "complete":
             self._complete(payload)

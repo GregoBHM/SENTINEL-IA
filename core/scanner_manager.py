@@ -183,8 +183,11 @@ class ScannerManager:
                 break
             started = time.perf_counter()
             state = "success"
+            signal_count = 0
             try:
-                outcome.signals.extend(engine.scan(target))
+                signals = engine.scan(target)
+                outcome.signals.extend(signals)
+                signal_count = len(signals)
                 outcome.succeeded += 1
             except ScanSkipped as exc:
                 state = "skipped"
@@ -205,6 +208,7 @@ class ScannerManager:
                     engine=engine.name, status=state,
                     duration_seconds=max(0.0, time.perf_counter() - started),
                     input_size_bytes=outcome.input_size_bytes,
+                    signal_count=signal_count,
                 ))
         # Reuse the hash engine's cache for whitelist decisions on YARA-only matches.
         hasher = next((e for e in self.engines if isinstance(e, HashEngine)), None)

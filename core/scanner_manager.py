@@ -272,18 +272,27 @@ class ScannerManager:
             for index, skipped in enumerate(outcome.skips):
                 details = (outcome.skip_details[index]
                            if index < len(outcome.skip_details) else {})
-                event = make_event(
-                    "skipped", str(details.get("code", "SCAN.ENGINE.SKIPPED")),
-                    engine=str(details.get("engine", "")),
-                    path=str(outcome.path),
-                    params=details.get("params"),
-                    message=skipped, scan_id=summary.session_id,
-                )
+                try:
+                    event = make_event(
+                        "skipped", str(details.get("code", "SCAN.ENGINE.SKIPPED")),
+                        engine=str(details.get("engine", "")),
+                        path=str(outcome.path),
+                        params=details.get("params"),
+                        message=skipped, scan_id=summary.session_id,
+                    )
+                except ValueError:
+                    # Invalid third-party engine codes do not abort the scan.
+                    event = make_event(
+                        "skipped", "SCAN.ENGINE.SKIPPED",
+                        engine=str(details.get("engine", "")),
+                        path=str(outcome.path), message=skipped,
+                        scan_id=summary.session_id,
+                    )
                 self.store.record_coverage(
                     summary.session_id, outcome.path,
                     str(details.get("engine", "")),
-                    str(details.get("code", "SCAN.ENGINE.SKIPPED")),
-                    details.get("params") or {}, skipped,
+                    event.payload["event_code"],
+                    event.payload["message_params"], skipped,
                 )
                 summary.omitted_checks += 1
                 self.event_bus.publish(event)

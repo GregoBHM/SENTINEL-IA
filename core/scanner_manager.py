@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,7 @@ from core.errors import ScanSkipped
 from core.event_bus import EventBus
 from core.events import make_event
 from core.models import AggregatedFinding, Finding, ScanEvent, ScanStatus, ScanSummary, ScanTarget
+from core.performance import EngineTiming, PerformanceMonitor
 from core.quarantine import quarantine_directory
 from db.database import SQLiteStore
 from engines.hash_engine import HashEngine
@@ -36,6 +38,8 @@ class TargetOutcome:
     skip_details: list[dict] = field(default_factory=list)
     succeeded: int = 0
     sha256: str | None = None
+    input_size_bytes: int = 0
+    engine_timings: list[EngineTiming] = field(default_factory=list)
 
 
 def discover_files(
@@ -98,15 +102,34 @@ class ScannerManager:
         self._resume.set()
         self.aggregator = FindingAggregator()
         self.last_summary: ScanSummary | None = None
+        self._performance = PerformanceMonitor()
+        self._known_targets = 0
+        self._discovery_closed = False
+        self._last_perf_publish = 0.0
+
+    def _emit_performance(self, *, force: bool = False) -> None:
+        """Publish bounded metric snapshots, not one event per engine call."""
+        now = time.monotonic()
+        if not force and now - self._last_perf_publish < 0.8:
+            return
+        self._last_perf_publish = now
+        snapshot = self._performance.snapshot(
+            known_targets=self._known_targets,
+            discovery_complete=self._discovery_closed,
+            allow_estimate=not self._cancel.is_set(),
+        )
+        self.event_bus.publish(ScanEvent("performance", snapshot))
 
     def pause(self) -> None:
         """Stop submitting more files; already running tasks may finish."""
         self._resume.clear()
+        self._performance.pause()
         self.event_bus.publish(ScanEvent("paused"))
 
     def resume(self) -> None:
         """Allow new tasks to be submitted after a pause."""
         self._resume.set()
+        self._performance.resume()
         self.event_bus.publish(ScanEvent("resumed"))
 
     def cancel(self) -> None:
@@ -124,13 +147,22 @@ class ScannerManager:
     def _scan_target(self, target: ScanTarget) -> TargetOutcome:
         """Collect detections and errors separately without treating errors as clean."""
         outcome = TargetOutcome(path=target.path, kind=target.kind)
+        if target.kind == "file":
+            try:
+                outcome.input_size_bytes = max(0, target.path.stat().st_size)
+            except OSError:
+                # Engines will record the access failure themselves.
+                pass
         for engine in self.engines:
             if self._cancel.is_set():
                 break
+            started = time.perf_counter()
+            state = "success"
             try:
                 outcome.signals.extend(engine.scan(target))
                 outcome.succeeded += 1
             except ScanSkipped as exc:
+                state = "skipped"
                 outcome.skips.append(f"{engine.name}: {exc}")
                 outcome.skip_details.append({
                     "engine": engine.name,
@@ -139,9 +171,16 @@ class ScannerManager:
                 })
             except Exception as exc:
                 # Engines are independent; a failure in one must not skip others.
+                state = "error"
                 message = f"{engine.name}: {type(exc).__name__}: {exc}"
                 outcome.errors.append(message)
                 LOG.warning("Error del motor %s: %s", engine.name, type(exc).__name__)
+            finally:
+                outcome.engine_timings.append(EngineTiming(
+                    engine=engine.name, status=state,
+                    duration_seconds=max(0.0, time.perf_counter() - started),
+                    input_size_bytes=outcome.input_size_bytes,
+                ))
         # Reuse the hash engine's cache for whitelist decisions on YARA-only matches.
         hasher = next((e for e in self.engines if isinstance(e, HashEngine)), None)
         if target.kind == "file" and hasher is not None and outcome.succeeded:
@@ -161,6 +200,10 @@ class ScannerManager:
             self._resume.set()
         session_id = uuid4().hex
         summary = ScanSummary(session_id=session_id, status=ScanStatus.RUNNING)
+        self._performance = PerformanceMonitor()
+        self._known_targets = 0
+        self._discovery_closed = False
+        self._last_perf_publish = 0.0
         self.store.start_session(session_id)
         self.event_bus.publish(ScanEvent("started", {"session_id": session_id}))
         # Exclude our actively written DB and its WAL/SHM companions.
@@ -194,6 +237,7 @@ class ScannerManager:
                     future = executor.submit(self._scan_target, target)
                     pending.add(future)
                     summary.discovered_files += 1
+                    self._known_targets += 1
                     self.event_bus.publish(ScanEvent("current_target", {"path": str(path)}))
                     if len(pending) >= self.config.max_pending:
                         done, pending = wait(pending, return_when=FIRST_COMPLETED)
@@ -205,12 +249,15 @@ class ScannerManager:
                     if self._cancel.is_set():
                         break
                     pending.add(executor.submit(self._scan_target, target))
+                    self._known_targets += 1
                     self.event_bus.publish(ScanEvent("current_target", {
                         "path": str(target.path), "kind": target.kind,
                     }))
                     if len(pending) >= self.config.max_pending:
                         done, pending = wait(pending, return_when=FIRST_COMPLETED)
                         self._process_completed(done, summary)
+                self._discovery_closed = True
+                self._emit_performance(force=True)
                 # Only already-started tasks are allowed to complete after cancel.
                 if self._cancel.is_set():
                     for job in pending:
@@ -225,6 +272,9 @@ class ScannerManager:
             summary.status = ScanStatus.FAILED
             self.event_bus.publish(ScanEvent("error", {"message": str(exc)}))
         finally:
+            self._performance.finish()
+            summary.engine_metrics = self._performance.engine_metrics()
+            self.store.save_engine_metrics(summary.session_id, summary.engine_metrics)
             self.store.finish_session(summary)
             self.last_summary = summary
             self.event_bus.publish(ScanEvent("complete", {
@@ -232,6 +282,11 @@ class ScannerManager:
                 "discovered": summary.discovered_files, "scanned": summary.scanned_files,
                 "finding_files": summary.finding_files, "errors": summary.errors,
                 "omitted_checks": summary.omitted_checks,
+                "performance": self._performance.snapshot(
+                    known_targets=self._known_targets,
+                    discovery_complete=self._discovery_closed,
+                    allow_estimate=False,
+                ),
             }))
         return summary
 
@@ -248,6 +303,10 @@ class ScannerManager:
                 summary.errors += 1
                 self.event_bus.publish(ScanEvent("error", {"message": str(exc)}))
                 continue
+            self._performance.record_target(
+                input_size_bytes=outcome.input_size_bytes,
+                timings=outcome.engine_timings,
+            )
             status = "scanned"
             if outcome.errors or outcome.skips or any(
                 item.details.get("limitation") for item in outcome.signals
@@ -332,3 +391,4 @@ class ScannerManager:
                 "system_scanned": summary.scanned_system_targets,
                 "errors": summary.errors,
             }))
+        self._emit_performance()

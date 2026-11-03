@@ -12,6 +12,11 @@ Observar el coste real de cada motor en Windows antes de cambiar algoritmos de d
 - PySide6: muestra intervalos y un detalle por motor de duración acumulada, media por comprobación, omisiones, errores y tamaño de entradas.
 - Uso de recursos opcional (psutil): CPU del proceso y memoria RSS del proceso, sin interpretarlos como porcentaje total del equipo. Si no está disponible, el análisis continúa normalmente.
 - En Historial puede consultarse la duración agregada de motores de una sesión ya almacenada; el usuario no necesita volver a escanear.
+- El botón **Estado y rendimiento de motores** muestra una tabla que combina el inventario de la preparación con las invocaciones medidas. Los estados **Preparado**, **No disponible**, **No solicitado** e **Inventario parcial** son distintos.
+- La columna **Señales** cuenta las observaciones que devolvieron los motores, no amenazas verificadas ni objetivos maliciosos. La correlación y el número de hallazgos finales se mantienen independientes.
+- El historial solo muestra métricas históricas guardadas, sin reutilizar el inventario de la sesión actual.
+- El usuario puede consultar rutas y causas concretas desde **Ver omisiones**; el inventario del motor no sustituye esa evidencia.
+
 - Compatibilidad: todas las operaciones de mitigación siguen exigiendo confirmación y ningún motor requiere Internet.
 
 ## Definiciones de métricas

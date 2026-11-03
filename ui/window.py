@@ -833,11 +833,13 @@ class OneGuardWindow(QMainWindow):
             + (f" · pausa {format_duration(observed.paused_seconds)}"
                if observed.paused_seconds > 0 else "")
         )
-        self.rate_label.setText(
-            f"Ritmo observado  {observed.files_per_second:.1f} archivos/s"
-            if observed.active_seconds >= 1.0 else
-            "Ritmo observado  calculando…"
-        )
+        # Prefer the scanner's measured target throughput once available.
+        if self._latest_performance is None:
+            self.rate_label.setText(
+                f"Ritmo observado  {observed.files_per_second:.1f} archivos/s"
+                if observed.active_seconds >= 1.0 else
+                "Ritmo observado  calculando…"
+            )
         phase_end = self._phase_finished_at if self._phase_finished_at is not None else now
         phase_elapsed = max(0.0, phase_end - self._phase_started_at)
         self.phase_time_label.setText(
@@ -1065,7 +1067,11 @@ class OneGuardWindow(QMainWindow):
         self._update_scan_metrics(force=True)
         if isinstance(payload.get("performance"), dict):
             self._render_performance(payload["performance"])
-        self.eta_label.setText("Tiempo restante · análisis finalizado")
+        self.eta_label.setText(
+            "Tiempo restante · análisis finalizado"
+            if payload.get("status") == "completed" else
+            "Tiempo restante · análisis interrumpido"
+        )
         self._display_session_id = self.session_id
         status = str(payload.get("status", "failed"))
         self.global_progress.setRange(0, 100)

@@ -21,6 +21,7 @@ class EngineTiming:
     status: str
     duration_seconds: float
     input_size_bytes: int
+    signal_count: int = 0
 
 
 class PerformanceMonitor:
@@ -74,6 +75,7 @@ class PerformanceMonitor:
                 entry = self._engine.setdefault(timing.engine, {
                     "checks": 0, "completed": 0, "skipped": 0, "errors": 0,
                     "duration_seconds": 0.0, "input_size_bytes": 0,
+                    "signals": 0,
                 })
                 entry["checks"] += 1
                 if timing.status == "success":
@@ -84,6 +86,7 @@ class PerformanceMonitor:
                     entry["errors"] += 1
                 entry["duration_seconds"] += max(0.0, timing.duration_seconds)
                 entry["input_size_bytes"] += max(0, timing.input_size_bytes)
+                entry["signals"] += max(0, timing.signal_count)
             now = self._clock()
             active = self._active_time(now)
             self._samples.append((active, self._completed))

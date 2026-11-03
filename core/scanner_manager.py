@@ -174,10 +174,11 @@ class ScannerManager:
         def report_discovery_error(path: Path, exc: OSError) -> None:
             """Count inaccessible paths instead of claiming they were clean."""
             summary.errors += 1
-            self.event_bus.publish(ScanEvent("error", {
-                "path": str(path),
-                "message": f"No fue posible descubrir {path}: {type(exc).__name__}",
-            }))
+            self.event_bus.publish(make_event(
+                "error", "SCAN.DISCOVERY.ERROR", engine="discovery",
+                path=str(path), scan_id=summary.session_id,
+                message=f"No fue posible descubrir {path}: {type(exc).__name__}",
+            ))
 
         try:
             with ThreadPoolExecutor(max_workers=self.config.max_workers,
@@ -262,9 +263,12 @@ class ScannerManager:
                 summary.scanned_system_targets += 1
             summary.errors += len(outcome.errors)
             for error in outcome.errors:
-                self.event_bus.publish(ScanEvent("error", {
-                    "path": str(outcome.path), "message": error,
-                }))
+                self.event_bus.publish(make_event(
+                    "error", "SCAN.ENGINE.ERROR",
+                    engine=error.split(":", 1)[0],
+                    path=str(outcome.path), scan_id=summary.session_id,
+                    message=error,
+                ))
             for index, skipped in enumerate(outcome.skips):
                 details = (outcome.skip_details[index]
                            if index < len(outcome.skip_details) else {})
@@ -273,7 +277,7 @@ class ScannerManager:
                     engine=str(details.get("engine", "")),
                     path=str(outcome.path),
                     params=details.get("params"),
-                    message=skipped,
+                    message=skipped, scan_id=summary.session_id,
                 )
                 self.store.record_coverage(
                     summary.session_id, outcome.path,

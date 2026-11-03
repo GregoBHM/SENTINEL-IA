@@ -408,6 +408,10 @@ class OneGuardWindow(QMainWindow):
         work_layout.addLayout(timing)
         self.eta_label = label("Tiempo restante · recopilando mediciones", "SmallHelp")
         work_layout.addWidget(self.eta_label)
+        self.resources_label = label("Recursos · recopilando datos", "SmallHelp")
+        self.pending_label = label("Objetivos pendientes · sin inventario completo", "SmallHelp")
+        work_layout.addWidget(self.resources_label)
+        work_layout.addWidget(self.pending_label)
         self.engine_perf_button = QPushButton("Rendimiento por motor")
         self.engine_perf_button.setEnabled(False)
         self.engine_perf_button.clicked.connect(self.show_engine_performance)
@@ -609,9 +613,15 @@ class OneGuardWindow(QMainWindow):
         self.history_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.history_table.doubleClicked.connect(self.open_historical_scan)
         column.addWidget(self.history_table, 1)
+        buttons = QHBoxLayout()
         reload_button = QPushButton("Actualizar historial")
         reload_button.clicked.connect(self.refresh_history)
-        column.addWidget(reload_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        buttons.addWidget(reload_button)
+        timing_button = QPushButton("Ver rendimiento de sesión")
+        timing_button.clicked.connect(self.show_historical_performance)
+        buttons.addWidget(timing_button)
+        buttons.addStretch()
+        column.addLayout(buttons)
         column.addWidget(label("Puedes exportar informes HTML/CSV desde Hallazgos tras abrir una sesión."))
         self.pages.removeWidget(self.pages.widget(4))
         self.pages.insertWidget(4, page)
@@ -742,6 +752,8 @@ class OneGuardWindow(QMainWindow):
         self._latest_performance = None
         self.engine_perf_button.setEnabled(False)
         self.eta_label.setText("Tiempo restante · recopilando mediciones")
+        self.resources_label.setText("Recursos · recopilando datos")
+        self.pending_label.setText("Objetivos pendientes · sin inventario completo")
         self._last_clock_refresh = 0.0
         self.elapsed_label.setText("Transcurrido  00:00")
         self.rate_label.setText("Ritmo observado  — archivos/s")
@@ -851,6 +863,22 @@ class OneGuardWindow(QMainWindow):
         self._latest_performance = data
         engines = data.get("engines") or {}
         self.engine_perf_button.setEnabled(bool(engines))
+        resources = data.get("process_resources") or {}
+        if resources:
+            cpu = float(resources.get("cpu_percent", 0.0))
+            ram = int(resources.get("rss_bytes", 0)) / (1024 * 1024)
+            self.resources_label.setText(
+                f"Este proceso · CPU {cpu:.1f}% · memoria RAM {ram:.0f} MiB"
+            )
+        else:
+            self.resources_label.setText("Recursos · no disponibles")
+        pending = max(0, int(data.get("remaining_known", 0)))
+        discovery = bool(data.get("discovery_complete", False))
+        self.pending_label.setText(
+            f"Objetivos conocidos pendientes · {pending:,}"
+            .replace(",", ".") +
+            ("" if discovery else " · inventario en curso")
+        )
         speed = float(data.get("throughput_targets_per_second", 0.0))
         self.rate_label.setText(
             f"Ritmo observado  {speed:.1f} objetivos/s" if speed > 0
@@ -878,9 +906,13 @@ class OneGuardWindow(QMainWindow):
                 )
 
     def show_engine_performance(self) -> None:
-        """Expose actual per-engine timings, never fictional throughput values."""
-        data = self._latest_performance or {}
-        engines = data.get("engines") or {}
+        """Show observed engine measurements for the current session."""
+        self._open_engine_metrics(
+            (self._latest_performance or {}).get("engines") or {}
+        )
+
+    def _open_engine_metrics(self, engines: dict) -> None:
+        """Present cumulative measurements without confusing concurrency with wall time."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Rendimiento observado por motor")
         dialog.resize(760, 460)
@@ -1274,6 +1306,33 @@ class OneGuardWindow(QMainWindow):
                 item = QTableWidgetItem(value)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.history_table.setItem(row_index, column, item)
+
+    def show_historical_performance(self) -> None:
+        """Inspect saved engine performance without re-running any scan."""
+        index = self.history_table.currentRow()
+        record = self.history_table.item(index, 6) if index >= 0 else None
+        if record is None:
+            QMessageBox.information(
+                self, "Rendimiento", "Selecciona primero un análisis del historial."
+            )
+            return
+        try:
+            metrics = SQLiteStore(
+                self.config.database_path
+            ).get_engine_metrics(record.text())
+        except (sqlite3.Error, OSError):
+            QMessageBox.warning(
+                self, "Rendimiento", "No se pudo consultar la medición almacenada."
+            )
+            return
+        if not metrics:
+            QMessageBox.information(
+                self, "Rendimiento", "Esta sesión no tiene métricas por motor."
+            )
+            return
+        self._open_engine_metrics({
+            str(item["engine"]): item for item in metrics
+        })
 
     def open_historical_scan(self, index: QModelIndex) -> None:
         """Inspect one previous session without re-running any detection."""

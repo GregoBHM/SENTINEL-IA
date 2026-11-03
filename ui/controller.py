@@ -9,6 +9,7 @@ from pathlib import Path
 from app.config import ScanConfig
 from core.errors import RuleLoadError
 from core.event_bus import EventBus
+from core.events import make_event
 from core.models import ScanEvent, ScanTarget
 from core.investigation import IncidentInvestigator
 from core.reputation_client import ReputationClient
@@ -63,9 +64,9 @@ class ScanController:
             store = SQLiteStore(config.database_path)
             reputation = ReputationClient(config, store) if plan.online and (vt_key or mb_key) else None
             if plan.online and reputation is None:
-                self.bus.publish(ScanEvent("warning", {
-                    "message": "Reputación externa autorizada, pero no hay API keys: solo análisis local.",
-                }))
+                self.bus.publish(make_event(
+                    "warning", "SCAN.REPUTATION.UNCONFIGURED", engine="reputation",
+                ))
             hash_engine = HashEngine(store, reputation)
             engines = [hash_engine]
             yara_engine = None
@@ -76,9 +77,10 @@ class ScanController:
                 )
                 engines.append(yara_engine)
             except RuleLoadError as exc:
-                self.bus.publish(ScanEvent("warning", {
-                    "message": f"YARA omitido: {exc}. Cobertura parcial.",
-                }))
+                self.bus.publish(make_event(
+                    "warning", "SCAN.YARA.UNAVAILABLE", engine="yara",
+                    message=f"{type(exc).__name__}: {exc}",
+                ))
             pe_engine = PEEngine(max_file_size=config.pe_max_file_size)
             script_engine = ScriptEngine(max_script_bytes=config.script_max_bytes)
             engines.extend((pe_engine, script_engine))
@@ -143,9 +145,10 @@ class ScanController:
                     "message": f"Investigación no disponible: {type(exc).__name__}",
                 }))
         except Exception as exc:
-            self.bus.publish(ScanEvent("error", {
-                "message": f"Error al iniciar: {type(exc).__name__}: {exc}",
-            }))
+            self.bus.publish(make_event(
+                "error", "SCAN.INIT.FAILED", engine="bootstrap",
+                message=f"Error al iniciar: {type(exc).__name__}: {exc}",
+            ))
             self.bus.publish(ScanEvent("complete", {
                 "status": "failed", "scanned": 0, "discovered": 0,
                 "finding_files": 0, "errors": 1,

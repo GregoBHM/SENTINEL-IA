@@ -15,6 +15,7 @@ from core.aggregator import FindingAggregator
 from core.detection_engine import DetectionEngine
 from core.errors import ScanSkipped
 from core.event_bus import EventBus
+from core.events import make_event
 from core.models import AggregatedFinding, Finding, ScanEvent, ScanStatus, ScanSummary, ScanTarget
 from core.quarantine import quarantine_directory
 from db.database import SQLiteStore
@@ -32,6 +33,7 @@ class TargetOutcome:
     signals: list[Finding] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skips: list[str] = field(default_factory=list)
+    skip_details: list[dict] = field(default_factory=list)
     succeeded: int = 0
     sha256: str | None = None
 
@@ -130,6 +132,11 @@ class ScannerManager:
                 outcome.succeeded += 1
             except ScanSkipped as exc:
                 outcome.skips.append(f"{engine.name}: {exc}")
+                outcome.skip_details.append({
+                    "engine": engine.name,
+                    "code": exc.code,
+                    "params": exc.params,
+                })
             except Exception as exc:
                 # Engines are independent; a failure in one must not skip others.
                 message = f"{engine.name}: {type(exc).__name__}: {exc}"
@@ -167,10 +174,11 @@ class ScannerManager:
         def report_discovery_error(path: Path, exc: OSError) -> None:
             """Count inaccessible paths instead of claiming they were clean."""
             summary.errors += 1
-            self.event_bus.publish(ScanEvent("error", {
-                "path": str(path),
-                "message": f"No fue posible descubrir {path}: {type(exc).__name__}",
-            }))
+            self.event_bus.publish(make_event(
+                "error", "SCAN.DISCOVERY.ERROR", engine="discovery",
+                path=str(path), scan_id=summary.session_id,
+                message=f"No fue posible descubrir {path}: {type(exc).__name__}",
+            ))
 
         try:
             with ThreadPoolExecutor(max_workers=self.config.max_workers,
@@ -223,6 +231,7 @@ class ScannerManager:
                 "session_id": summary.session_id, "status": summary.status.value,
                 "discovered": summary.discovered_files, "scanned": summary.scanned_files,
                 "finding_files": summary.finding_files, "errors": summary.errors,
+                "omitted_checks": summary.omitted_checks,
             }))
         return summary
 
@@ -254,13 +263,39 @@ class ScannerManager:
                 summary.scanned_system_targets += 1
             summary.errors += len(outcome.errors)
             for error in outcome.errors:
-                self.event_bus.publish(ScanEvent("error", {
-                    "path": str(outcome.path), "message": error,
-                }))
-            for skipped in outcome.skips:
-                self.event_bus.publish(ScanEvent("skipped", {
-                    "path": str(outcome.path), "message": skipped,
-                }))
+                self.event_bus.publish(make_event(
+                    "error", "SCAN.ENGINE.ERROR",
+                    engine=error.split(":", 1)[0],
+                    path=str(outcome.path), scan_id=summary.session_id,
+                    message=error,
+                ))
+            for index, skipped in enumerate(outcome.skips):
+                details = (outcome.skip_details[index]
+                           if index < len(outcome.skip_details) else {})
+                try:
+                    event = make_event(
+                        "skipped", str(details.get("code", "SCAN.ENGINE.SKIPPED")),
+                        engine=str(details.get("engine", "")),
+                        path=str(outcome.path),
+                        params=details.get("params"),
+                        message=skipped, scan_id=summary.session_id,
+                    )
+                except ValueError:
+                    # Invalid third-party engine codes do not abort the scan.
+                    event = make_event(
+                        "skipped", "SCAN.ENGINE.SKIPPED",
+                        engine=str(details.get("engine", "")),
+                        path=str(outcome.path), message=skipped,
+                        scan_id=summary.session_id,
+                    )
+                self.store.record_coverage(
+                    summary.session_id, outcome.path,
+                    str(details.get("engine", "")),
+                    event.payload["event_code"],
+                    event.payload["message_params"], skipped,
+                )
+                summary.omitted_checks += 1
+                self.event_bus.publish(event)
             allowlist = (
                 {outcome.sha256} if outcome.sha256 and self.store.is_whitelisted(outcome.sha256)
                 else set()

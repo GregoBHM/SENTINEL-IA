@@ -2,7 +2,16 @@
 
 
 class ScanSkipped(Exception):
-    """An engine deliberately skipped the target due to a configured limitation."""
+    """An intentional omission, with optional machine-readable coverage details."""
+
+    def __init__(
+        self, message: str, *, code: str = "SCAN.ENGINE.SKIPPED",
+        params: dict | None = None,
+    ) -> None:
+        """Preserve legacy text for logs and typed details for the UI."""
+        super().__init__(message)
+        self.code = code
+        self.params = dict(params or {})
 
 
 class FileChangedDuringScan(OSError):

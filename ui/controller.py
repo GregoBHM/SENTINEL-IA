@@ -9,6 +9,7 @@ from pathlib import Path
 from app.config import ScanConfig
 from core.errors import RuleLoadError
 from core.event_bus import EventBus
+from core.engine_inventory import build_engine_inventory
 from core.events import make_event
 from core.models import ScanEvent, ScanTarget
 from core.investigation import IncidentInvestigator
@@ -128,6 +129,22 @@ class ScanController:
                             self.bus.publish(ScanEvent("warning", {
                                 "message": f"Persistencia: inventario parcial ({type(exc).__name__})",
                             }))
+            inventory = build_engine_inventory(
+                engines, inspect_processes=plan.processes,
+                inspect_persistence=plan.persistence,
+                online_authorized=plan.online,
+                online_configured=reputation is not None,
+                is_windows=sys.platform == "win32",
+                process_targets=sum(
+                    item.kind == "process" for item in extra_targets
+                ),
+                persistence_targets=sum(
+                    item.kind == "persistence" for item in extra_targets
+                ),
+            )
+            self.bus.publish(ScanEvent("engine_inventory", {
+                "engines": inventory,
+            }))
             if self._cancel_requested.is_set():
                 self.bus.publish(ScanEvent("complete", {
                     "status": "cancelled", "scanned": 0, "discovered": 0,

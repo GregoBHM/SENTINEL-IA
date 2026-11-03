@@ -25,3 +25,16 @@ jobs:
         if: success()
         shell: pwsh
         run: Get-Content .\dist\SentinelOneGuard.sha256.txt
+      - name: Capture GUI layout previews (no scanning, synthetic example)
+        if: success()
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: .\.venv\Scripts\python.exe tools\capture_gui_previews.py
+      - name: Upload GUI screenshots for visual QA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-oneguard-ui-previews
+          path: artifacts/gui-previews/*.png
+          if-no-files-found: error

@@ -268,7 +268,7 @@ class OneGuardWindow(QMainWindow):
         brand_bar.addLayout(brand_text)
         brand_bar.addStretch()
         side.addLayout(brand_bar)
-        side.addWidget(label("SEGURIDAD / INVESTIGACIÓN", "Eyebrow", wrap=False))
+        side.addWidget(label("CENTRO DE ANÁLISIS", "Eyebrow", wrap=False))
         side.addSpacing(20)
         self.nav_buttons = []
         for index, title in enumerate(self.PAGE_NAMES):
@@ -287,7 +287,7 @@ class OneGuardWindow(QMainWindow):
         )
         note.addWidget(self.sidebar_status)
         side.addWidget(panel(note))
-        side.addWidget(label("MITIGACIÓN EXPERIMENTAL", "Eyebrow", wrap=False))
+        side.addWidget(label("MITIGACIÓN MANUAL", "Eyebrow", wrap=False))
         self.pages = QStackedWidget()
         for _ in self.PAGE_NAMES:
             self.pages.addWidget(QWidget())

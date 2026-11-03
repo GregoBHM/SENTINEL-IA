@@ -75,6 +75,41 @@ class SQLiteStore:
                  summary.omitted_checks, summary.session_id),
             )
 
+    def save_engine_metrics(
+        self, session_id: str, metrics: dict[str, dict[str, int | float]]
+    ) -> None:
+        """Persist measured engine timings in a single SQLite transaction."""
+        if not metrics:
+            return
+        with self.connection() as conn:
+            conn.executemany(
+                """INSERT OR REPLACE INTO scan_engine_metrics
+                   (session_id,engine,checks,completed,skipped,errors,
+                    duration_seconds,input_size_bytes)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                [
+                    (session_id, engine, int(row.get("checks", 0)),
+                     int(row.get("completed", 0)), int(row.get("skipped", 0)),
+                     int(row.get("errors", 0)),
+                     float(row.get("duration_seconds", 0.0)),
+                     int(row.get("input_size_bytes", 0)))
+                    for engine, row in metrics.items()
+                ],
+            )
+
+    def get_engine_metrics(self, session_id: str) -> list[dict[str, Any]]:
+        """Read aggregate engine metrics for a historical scan."""
+        with self.connection() as conn:
+            return [
+                dict(row) for row in conn.execute(
+                    """SELECT engine,checks,completed,skipped,errors,
+                              duration_seconds,input_size_bytes
+                       FROM scan_engine_metrics WHERE session_id=?
+                       ORDER BY duration_seconds DESC""",
+                    (session_id,),
+                ).fetchall()
+            ]
+
     def record_target(
         self, session_id: str, path: Path, status: str,
         sha256: str | None = None, error: str | None = None,

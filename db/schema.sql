@@ -133,3 +133,18 @@ CREATE TABLE IF NOT EXISTS disabled_autoruns (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Observed timing per engine, without sensitive file paths.
+-- Input bytes reflect target sizes, NOT measured physical disk reads.
+CREATE TABLE IF NOT EXISTS scan_engine_metrics (
+    session_id TEXT NOT NULL REFERENCES scan_sessions(id),
+    engine TEXT NOT NULL,
+    checks INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    errors INTEGER NOT NULL DEFAULT 0,
+    duration_seconds REAL NOT NULL DEFAULT 0,
+    input_size_bytes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(session_id, engine)
+);
+CREATE INDEX IF NOT EXISTS ix_engine_metrics_session ON scan_engine_metrics(session_id);

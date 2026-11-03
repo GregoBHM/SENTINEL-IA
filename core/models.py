@@ -104,4 +104,5 @@ class ScanSummary:
     scanned_system_targets: int = 0
     finding_files: int = 0
     errors: int = 0
+    omitted_checks: int = 0
     findings: list[AggregatedFinding] = field(default_factory=list)

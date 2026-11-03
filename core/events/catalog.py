@@ -51,6 +51,14 @@ _CATALOG: dict[str, tuple[str, str, str, str | None]] = {
         "error", "ERROR", "No se pudo analizar un objetivo",
         "Ver detalle técnico",
     ),
+    "SCAN.INIT.FAILED": (
+        "error", "ERROR", "No se pudo iniciar el análisis",
+        "Consultar diagnóstico",
+    ),
+    "SCAN.DISCOVERY.ERROR": (
+        "error", "ERROR", "No se pudo acceder a un objetivo",
+        "Ver permisos y ruta",
+    ),
 }
 
 _DESCRIPTIONS = {
@@ -74,12 +82,21 @@ _DESCRIPTIONS = {
         "No se pudo completar una comprobación. "
         "El error no constituye por sí mismo una infección."
     ),
+    "SCAN.INIT.FAILED": (
+        "Un componente necesario falló antes del análisis. "
+        "El resultado no es concluyente; consulta el registro técnico."
+    ),
+    "SCAN.DISCOVERY.ERROR": (
+        "Un archivo o carpeta no pudo descubrirse. "
+        "Esta parte del análisis tiene cobertura incompleta."
+    ),
 }
 
 
 def make_event(
     kind: str, code: str, *, engine: str = "", path: str = "",
     params: dict[str, Any] | None = None, message: str = "",
+    scan_id: str = "", target_id: str = "",
 ) -> ScanEvent:
     """Create a versioned event while preserving the legacy kind/payload API."""
     if code not in _CATALOG:
@@ -91,6 +108,9 @@ def make_event(
         "event_id": uuid4().hex,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "event_code": code,
+        "scan_id": scan_id,
+        "target_id": target_id,
+        "title_key": code,
         "category": category,
         "level": level,
         "engine": engine,

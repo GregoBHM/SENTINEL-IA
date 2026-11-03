@@ -73,7 +73,7 @@ def test_engine_metrics_differentiate_success_skip_and_error() -> None:
     clock = FakeClock()
     monitor = PerformanceMonitor(clock)
     monitor.record_target(input_size_bytes=17, timings=[
-        EngineTiming("yara", "success", 0.02, 17),
+        EngineTiming("yara", "success", 0.02, 17, signal_count=2),
         EngineTiming("pe", "skipped", 0.01, 17),
     ])
     monitor.record_target(input_size_bytes=21, timings=[
@@ -82,6 +82,7 @@ def test_engine_metrics_differentiate_success_skip_and_error() -> None:
     ])
     metrics = monitor.engine_metrics()
     assert metrics["yara"]["checks"] == 2
+    assert metrics["yara"]["signals"] == 2
     assert metrics["yara"]["completed"] == 1
     assert metrics["yara"]["errors"] == 1
     assert metrics["pe"]["skipped"] == 1

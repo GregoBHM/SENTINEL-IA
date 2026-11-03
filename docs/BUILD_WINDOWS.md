@@ -1,6 +1,6 @@
 # Generar SentinelOneGuard.exe con logo en Windows
 
-**Estado:** fuente lista para compilación reproducible; la compilación de Windows no se pudo realizar en el entorno Linux usado para preparar este paquete. Por eso **no contiene un EXE listo para abrir**. El ejecutable solo debe considerarse validado después de ejecutar las pruebas en Windows.
+**Estado:** GitHub Actions compila el ejecutable en un runner Windows 64 bits y lo publica como artefacto descargable cuando las pruebas terminan correctamente. El archivo continúa siendo **experimental y sin firma digital**. La comprobación del empaquetado no equivale a una validación de desinfección.
 
 ## Qué se va a obtener
 
@@ -19,16 +19,21 @@
 
 Las dependencias se instalan desde pip; requiere acceso a Internet durante la compilación. El EXE final contiene el runtime de Python, las librerías usadas y las reglas de ejemplo. No requiere instalar Python en la PC donde se ejecuta.
 
-El script detiene la compilación si fallan pytest, la apertura de una ventana Qt de prueba o el análisis del PE generado. En Windows el empaquetado puede requerir adaptaciones según versiones de librerías y antivirus: **no se ha probado esa fase aquí**.
+El script detiene la compilación si fallan pytest, la comprobación Qt o el análisis del PE generado y sus recursos internos. El análisis completo y la mitigación aún deben validarse en una máquina Windows de pruebas.
 
-## Método B: GitHub Actions (sin Python local)
+## Método B: GitHub Actions (automático, sin Python local)
 
-1. Sube el contenido del ZIP a **tu propio repositorio privado** de GitHub. No subas API keys ni bases de datos con información personal.
-2. En **Actions**, elige `Build branded Windows executable` y pulsa `Run workflow`.
-3. Al completar el workflow en un runner de Windows, descarga el artefacto `SentinelOneGuard-Windows-EXE` desde la pestaña Actions.
-4. Comprueba su SHA-256 antes de distribuir.
+**El repositorio genera el EXE automáticamente con cada push a `main`.** También puedes lanzar la compilación manualmente:
 
-Este workflow se activa solo manualmente. No publica binarios ni crea una release pública por sí mismo.
+1. Abre https://github.com/GregoBHM/SENTINEL-IA/actions/workflows/windows-exe.yml.
+2. Si acabas de realizar un push a `main`, abre la nueva ejecución de **Build branded Windows executable**; no necesitas pulsar nada. Para crearla manualmente, selecciona **Run workflow** y la rama `main`.
+3. Cuando la ejecución esté en verde, entra y abre **Artifacts** al final de la página.
+4. Descarga `SentinelOneGuard-Windows-EXE`, descomprime el ZIP y extrae `SentinelOneGuard.exe` junto con `SentinelOneGuard.sha256.txt`.
+5. En PowerShell puedes comprobar el hash con `Get-FileHash -Algorithm SHA256 .\\SentinelOneGuard.exe` y compararlo con el archivo `.sha256.txt`.
+
+El workflow ejecuta tests, prueba de inicio Qt, empaqueta recursos SQLite / YARA, verifica el icono y UAC, e inspecciona que `db/schema.sql` esté dentro del ejecutable. Los artefactos se conservan 30 días; para distribuir versiones estables a futuro sería necesaria una política de releases y firma de código.
+
+**Aviso:** no descargues ni ejecutes la versión antigua si produce `_MEI.../db/schema.sql` no encontrado; ese error significa que el EXE no incluye el esquema. Utiliza una ejecución nueva de `main` cuyo workflow termine correctamente. Antes de analizar una PC comprometida, prueba en una VM con snapshot y evita la mitigación experimental en dispositivos reales.
 
 ## Validación de seguridad previa a su uso
 

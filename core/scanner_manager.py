@@ -230,6 +230,7 @@ class ScannerManager:
                 "session_id": summary.session_id, "status": summary.status.value,
                 "discovered": summary.discovered_files, "scanned": summary.scanned_files,
                 "finding_files": summary.finding_files, "errors": summary.errors,
+                "omitted_checks": summary.omitted_checks,
             }))
         return summary
 
@@ -274,6 +275,13 @@ class ScannerManager:
                     params=details.get("params"),
                     message=skipped,
                 )
+                self.store.record_coverage(
+                    summary.session_id, outcome.path,
+                    str(details.get("engine", "")),
+                    str(details.get("code", "SCAN.ENGINE.SKIPPED")),
+                    details.get("params") or {}, skipped,
+                )
+                summary.omitted_checks += 1
                 self.event_bus.publish(event)
             allowlist = (
                 {outcome.sha256} if outcome.sha256 and self.store.is_whitelisted(outcome.sha256)

@@ -22,12 +22,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QMainWindow,
     QInputDialog, QFileDialog,
     QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
+    QDialog, QDialogButtonBox,
     QSplitter, QStackedWidget, QTableView, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
 from app.config import ScanConfig
 from core.models import ScanEvent
+from core.events import present_event
 from core.scan_clock import ScanClock, format_duration
 from core.quarantine import QuarantineService
 from core.report import ReportService
@@ -209,6 +211,8 @@ class OneGuardWindow(QMainWindow):
         self.vt_key = ""
         self.mb_key = ""
         self._seen_warnings = 0
+        self._coverage_groups: dict[str, int] = {}
+        self._coverage_titles: dict[str, str] = {}
         self._current_error_count = 0
         self._found = 0
         self._is_paused = False
@@ -380,7 +384,7 @@ class OneGuardWindow(QMainWindow):
         metrics = QHBoxLayout()
         self.scanned_tile = MetricTile("Inspeccionados", COLORS["accent"])
         self.threats_tile = MetricTile("Hallazgos", COLORS["danger"])
-        self.partial_tile = MetricTile("Advertencias", COLORS["amber"])
+        self.partial_tile = MetricTile("Cobertura parcial", COLORS["amber"])
         self.error_tile = MetricTile("Errores", COLORS["muted"])
         for tile in (self.scanned_tile, self.threats_tile, self.partial_tile, self.error_tile):
             metrics.addWidget(tile, 1)
@@ -441,6 +445,10 @@ class OneGuardWindow(QMainWindow):
         log_title = QHBoxLayout()
         log_title.addWidget(label("REGISTRO DE ACTIVIDAD", "Eyebrow", wrap=False))
         log_title.addStretch()
+        self.coverage_detail_button = QPushButton("Ver omisiones")
+        self.coverage_detail_button.setEnabled(False)
+        self.coverage_detail_button.clicked.connect(self.show_coverage_details)
+        log_title.addWidget(self.coverage_detail_button)
         self.console_toggle = QPushButton("Ocultar registro")
         self.console_toggle.clicked.connect(self.toggle_console)
         log_title.addWidget(self.console_toggle)
@@ -704,6 +712,8 @@ class OneGuardWindow(QMainWindow):
         self._completion_seen = False
         self._is_paused = False
         self._seen_warnings = 0
+        self._coverage_groups.clear()
+        self._coverage_titles.clear()
         self._current_error_count = 0
         self._found = 0
         self._last_fetch_count = 0
@@ -715,6 +725,7 @@ class OneGuardWindow(QMainWindow):
         self.scanned_tile.set_count(0)
         self.threats_tile.set_count(0)
         self.partial_tile.set_count(0)
+        self.coverage_detail_button.setEnabled(False)
         self.error_tile.set_count(0)
         self.global_progress.setRange(0, 0)
         self.phase_progress.setRange(0, 100)
@@ -823,6 +834,64 @@ class OneGuardWindow(QMainWindow):
             f"Fase en curso  {format_duration(phase_elapsed)}"
         )
 
+    def _record_coverage(self, event: ScanEvent) -> None:
+        """Count partial checks while avoiding repeated console messages."""
+        note = present_event(event)
+        group = note.dedupe_key
+        count = self._coverage_groups.get(group, 0) + 1
+        self._coverage_groups[group] = count
+        self._coverage_titles[group] = note.title
+        self._seen_warnings += 1
+        self.partial_tile.set_count(self._seen_warnings)
+        self.coverage_detail_button.setEnabled(True)
+        if count == 1:
+            self._log("WARN", f"{note.title}. {note.description}")
+
+    def show_coverage_details(self) -> None:
+        """Show affected paths and reasons stored on this device."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Cobertura parcial · detalle de omisiones")
+        dialog.resize(850, 480)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(label(
+            "Una omisión no equivale a una infección. "
+            "Solo se muestran evidencias guardadas localmente."
+        ))
+        detail = QPlainTextEdit()
+        detail.setReadOnly(True)
+        lines = [
+            f"{title} — {self._coverage_groups[key]} incidencia(s)"
+            for key, title in self._coverage_titles.items()
+        ]
+        if self.session_id:
+            try:
+                store = SQLiteStore(self.config.database_path)
+                with store.connection() as conn:
+                    rows = conn.execute(
+                        """SELECT target_path, engine, detail
+                           FROM scan_coverage WHERE session_id=?
+                           ORDER BY target_path LIMIT 500""",
+                        (self.session_id,),
+                    ).fetchall()
+                    total = conn.execute(
+                        "SELECT COUNT(*) FROM scan_coverage WHERE session_id=?",
+                        (self.session_id,),
+                    ).fetchone()[0]
+                lines.extend(
+                    f"{row['engine']} · {row['target_path']}\n   {row['detail']}"
+                    for row in rows
+                )
+                if total > len(rows):
+                    lines.append(f"Hay {total - len(rows)} registros adicionales.")
+            except (OSError, sqlite3.Error) as exc:
+                lines.append(f"Historial no disponible: {type(exc).__name__}")
+        detail.setPlainText("\n\n".join(lines))
+        layout.addWidget(detail)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
+
     def _apply_event(self, event: ScanEvent) -> None:
         """Apply one immutable core event on the GUI thread only."""
         payload = event.payload
@@ -837,9 +906,11 @@ class OneGuardWindow(QMainWindow):
             self.scan_phase.setText(payload["name"])
             self._log("INFO", payload["name"])
         elif kind == "warning":
-            self._seen_warnings += 1
-            self.partial_tile.set_count(self._seen_warnings)
-            self._log("WARN", payload.get("message", "Cobertura parcial"))
+            note = present_event(event)
+            if note.category == "coverage":
+                self._record_coverage(event)
+            else:
+                self._log(note.level, f"{note.title}. {note.description}")
         elif kind == "current_target":
             self.current_target.setText(
                 "ÚLTIMO OBJETIVO ENVIADO A LA COLA   " + payload.get("path", "")
@@ -853,16 +924,14 @@ class OneGuardWindow(QMainWindow):
                      "WARN" if severity in ("medium", "low") else "INFO")
             self._log(level, f"{severity.upper()} · {payload.get('type')} · {payload.get('target')}")
         elif kind == "skipped":
-            self._seen_warnings += 1
-            self.partial_tile.set_count(self._seen_warnings)
-            if self._seen_warnings <= 25:
-                self._log("WARN", payload.get("message", "Omitido"))
+            self._record_coverage(event)
         elif kind == "error":
             self._current_error_count += 1
             self.error_tile.set_count(self._current_error_count)
             message = str(payload.get("message", "Error no especificado"))
-            self.failure_hint.setText(explain_scan_error(message))
-            self.failure_hint.setVisible(True)
+            if self.session_id is None:
+                self.failure_hint.setText(explain_scan_error(message))
+                self.failure_hint.setVisible(True)
             self._log("ERROR", message)
         elif kind == "progress":
             done = int(payload.get("scanned", 0)) + int(payload.get("system_scanned", 0))
@@ -900,6 +969,11 @@ class OneGuardWindow(QMainWindow):
         self.scanned_tile.set_count(final_scanned)
         self.scan_clock.set_processed(final_scanned)
         self.error_tile.set_count(int(payload.get("errors", self._current_error_count)))
+        # Bounded queues may discard intermediate skip events; use final totals.
+        self._seen_warnings = max(
+            self._seen_warnings, int(payload.get("omitted_checks", 0))
+        )
+        self.partial_tile.set_count(self._seen_warnings)
         summary = self.controller.last_summary
         if summary is not None:
             self.threats_tile.set_count(len(summary.findings))
@@ -935,6 +1009,12 @@ class OneGuardWindow(QMainWindow):
         self.cancel_button.setEnabled(False)
         self.new_scan_button.setEnabled(True)
         self._log("OK" if status == "completed" else "WARN", self.scan_status.text())
+        for group, count in self._coverage_groups.items():
+            if count > 1:
+                self._log(
+                    "WARN", f"{self._coverage_titles[group]} · {count} omisiones. "
+                    "Consulta el detalle para revisar los objetivos."
+                )
         self._refresh_findings_safely()
         self.refresh_history()
         if self.session_id and self._last_fetch_count == 0:

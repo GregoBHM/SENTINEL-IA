@@ -106,3 +106,4 @@ class ScanSummary:
     errors: int = 0
     omitted_checks: int = 0
     findings: list[AggregatedFinding] = field(default_factory=list)
+    engine_metrics: dict[str, dict[str, int | float]] = field(default_factory=dict)

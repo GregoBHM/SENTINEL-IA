@@ -30,7 +30,7 @@ jobs:
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
-        run: .\.venv\Scripts\python.exe tools\capture_gui_previews.py
+        run: .\.venv\Scripts\python.exe -m tools.capture_gui_previews
       - name: Upload GUI screenshots for visual QA
         if: success()
         uses: actions/upload-artifact@v4

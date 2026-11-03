@@ -145,9 +145,10 @@ class ScanController:
                     "message": f"Investigación no disponible: {type(exc).__name__}",
                 }))
         except Exception as exc:
-            self.bus.publish(ScanEvent("error", {
-                "message": f"Error al iniciar: {type(exc).__name__}: {exc}",
-            }))
+            self.bus.publish(make_event(
+                "error", "SCAN.INIT.FAILED", engine="bootstrap",
+                message=f"Error al iniciar: {type(exc).__name__}: {exc}",
+            ))
             self.bus.publish(ScanEvent("complete", {
                 "status": "failed", "scanned": 0, "discovered": 0,
                 "finding_files": 0, "errors": 1,

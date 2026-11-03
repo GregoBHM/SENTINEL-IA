@@ -205,6 +205,7 @@ class OneGuardWindow(QMainWindow):
         self.controller = ScanController(self.config)
         self.scan_clock = ScanClock()
         self._last_clock_refresh = 0.0
+        self._latest_performance: dict | None = None
         self._phase_started_at = monotonic()
         self._phase_finished_at: float | None = None
         self.session_id: str | None = None
@@ -405,6 +406,12 @@ class OneGuardWindow(QMainWindow):
         timing.addStretch()
         timing.addWidget(self.rate_label)
         work_layout.addLayout(timing)
+        self.eta_label = label("Tiempo restante · recopilando mediciones", "SmallHelp")
+        work_layout.addWidget(self.eta_label)
+        self.engine_perf_button = QPushButton("Rendimiento por motor")
+        self.engine_perf_button.setEnabled(False)
+        self.engine_perf_button.clicked.connect(self.show_engine_performance)
+        work_layout.addWidget(self.engine_perf_button)
         self.phase_time_label = label("Fase en curso  00:00")
         work_layout.addWidget(self.phase_time_label)
         self.global_label = label("Progreso global · aún no disponible")
@@ -732,6 +739,9 @@ class OneGuardWindow(QMainWindow):
         self.phase_progress.setValue(0)
         self.global_label.setText("Descubriendo objetivos · tiempo restante no estimable")
         self.scan_clock.reset()
+        self._latest_performance = None
+        self.engine_perf_button.setEnabled(False)
+        self.eta_label.setText("Tiempo restante · recopilando mediciones")
         self._last_clock_refresh = 0.0
         self.elapsed_label.setText("Transcurrido  00:00")
         self.rate_label.setText("Ritmo observado  — archivos/s")
@@ -834,6 +844,77 @@ class OneGuardWindow(QMainWindow):
             f"Fase en curso  {format_duration(phase_elapsed)}"
         )
 
+    def _render_performance(self, data: dict) -> None:
+        """Display observed rates and an explicitly scoped time estimate."""
+        self._latest_performance = data
+        engines = data.get("engines") or {}
+        self.engine_perf_button.setEnabled(bool(engines))
+        speed = float(data.get("throughput_targets_per_second", 0.0))
+        self.rate_label.setText(
+            f"Ritmo observado  {speed:.1f} objetivos/s" if speed > 0
+            else "Ritmo observado  calculando…"
+        )
+        eta = data.get("eta")
+        if data.get("paused"):
+            self.eta_label.setText("Tiempo restante · análisis en pausa")
+        elif not isinstance(eta, dict):
+            self.eta_label.setText(
+                "Tiempo restante · recopilando mediciones"
+                if not data.get("discovery_complete")
+                else "Tiempo restante · sin estimación fiable"
+            )
+        else:
+            low = format_duration(float(eta.get("low_seconds", 0)))
+            high = format_duration(float(eta.get("high_seconds", 0)))
+            if eta.get("scope") == "known":
+                self.eta_label.setText(
+                    f"Cola conocida: ~{low}–{high} · aún se descubren objetivos"
+                )
+            else:
+                self.eta_label.setText(
+                    f"Tiempo restante orientativo: {low}–{high}"
+                )
+
+    def show_engine_performance(self) -> None:
+        """Expose actual per-engine timings, never fictional throughput values."""
+        data = self._latest_performance or {}
+        engines = data.get("engines") or {}
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Rendimiento observado por motor")
+        dialog.resize(760, 460)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(label(
+            "Duraciones acumuladas de invocaciones por motor. "
+            "Pueden ejecutarse en paralelo; no son el tiempo total. "
+            "Los bytes son tamaños de entrada, no lectura física."
+        ))
+        details = QPlainTextEdit()
+        details.setReadOnly(True)
+        rows = []
+        for name, item in sorted(
+            engines.items(),
+            key=lambda value: -float(value[1].get("duration_seconds", 0)),
+        ):
+            checks = int(item.get("checks", 0))
+            elapsed = float(item.get("duration_seconds", 0))
+            mean_ms = 1000 * elapsed / checks if checks else 0
+            mb = int(item.get("input_size_bytes", 0)) / (1024 * 1024)
+            rows.append(
+                f"{name} · {checks} comprobaciones · {elapsed:.2f} s acumulados "
+                f"· {mean_ms:.1f} ms/comprobación\n"
+                f"  Completadas: {item.get('completed', 0)} · "
+                f"Omitidas: {item.get('skipped', 0)} · "
+                f"Errores: {item.get('errors', 0)} · "
+                f"Entrada: {mb:.1f} MiB"
+            )
+        details.setPlainText("\n\n".join(rows) if rows else
+                             "Todavía no hay mediciones de motores.")
+        layout.addWidget(details)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
+
     def _record_coverage(self, event: ScanEvent) -> None:
         """Count partial checks while avoiding repeated console messages."""
         note = present_event(event)
@@ -933,6 +1014,8 @@ class OneGuardWindow(QMainWindow):
                 self.failure_hint.setText(explain_scan_error(message))
                 self.failure_hint.setVisible(True)
             self._log("ERROR", message)
+        elif kind == "performance":
+            self._render_performance(payload)
         elif kind == "progress":
             done = int(payload.get("scanned", 0)) + int(payload.get("system_scanned", 0))
             known = int(payload.get("discovered", 0)) + int(payload.get("system_scanned", 0))
@@ -980,6 +1063,9 @@ class OneGuardWindow(QMainWindow):
         self.scan_clock.finish()
         self._phase_finished_at = monotonic()
         self._update_scan_metrics(force=True)
+        if isinstance(payload.get("performance"), dict):
+            self._render_performance(payload["performance"])
+        self.eta_label.setText("Tiempo restante · análisis finalizado")
         self._display_session_id = self.session_id
         status = str(payload.get("status", "failed"))
         self.global_progress.setRange(0, 100)

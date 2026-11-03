@@ -6,9 +6,11 @@
 
 ## Entrega
 
+**Descarga Windows (experimental):** [Releases](https://github.com/GregoBHM/SENTINEL-IA/releases). Para publicar una nueva versión, actualiza `RELEASE_VERSION.txt` a un tag nuevo (por ejemplo `v0.6.0-beta.2`) y haz push a `main`. El workflow compila, valida y publica la pre-release si todo es correcto. [Instrucciones detalladas](docs/BUILD_WINDOWS.md).
+
 Consulta `RELEASE_NOTES.md` para el contenido de esta versión y las verificaciones pendientes.
 
-Se conservan los motores y la GUI de Fases 1–4, el escudo PNG/ICO y el script de compilación Windows. Esta entrega integra el código de las Fases 1–5 y los archivos de compilación y verificación de la Fase 6. **No es un EXE compilado en Windows ni una validación nativa del sistema operativo**. El `SentinelOneGuard.exe` debe generarse desde Windows con `COMPILAR_EXE_WINDOWS.cmd` o `build_windows.ps1`. La generación del EXE es una operación separada de la validación de sus acciones.
+Se conservan los motores y la GUI de Fases 1–4, el escudo PNG/ICO y la compilación Windows. Los binarios de prueba se publican en [GitHub Releases](https://github.com/GregoBHM/SENTINEL-IA/releases) como **pre-releases experimentales**, con etiqueta de versión, `SentinelOneGuard.exe` y SHA-256. También puedes generarlos localmente o con Actions. **Compilar y verificar el EXE no certifica la detección ni la mitigación en equipos comprometidos.**
 
 ### Nuevos módulos
 

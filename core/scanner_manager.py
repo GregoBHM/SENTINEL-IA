@@ -106,6 +106,32 @@ class ScannerManager:
         self._known_targets = 0
         self._discovery_closed = False
         self._last_perf_publish = 0.0
+        self._resource_process = None
+
+    def _performance_payload(self, *, allow_estimate: bool = True) -> dict:
+        """Prepare local metrics; optional process telemetry cannot break scans."""
+        snapshot = self._performance.snapshot(
+            known_targets=self._known_targets,
+            discovery_complete=self._discovery_closed,
+            allow_estimate=allow_estimate,
+        )
+        try:
+            import psutil
+
+            if self._resource_process is None:
+                self._resource_process = psutil.Process()
+                # First value is not meaningful until the next sample.
+                self._resource_process.cpu_percent(interval=None)
+            snapshot["process_resources"] = {
+                "cpu_percent": round(
+                    self._resource_process.cpu_percent(interval=None), 1
+                ),
+                "rss_bytes": int(self._resource_process.memory_info().rss),
+            }
+        except Exception:
+            # This is optional diagnostic information, not a scan result.
+            pass
+        return snapshot
 
     def _emit_performance(self, *, force: bool = False) -> None:
         """Publish bounded metric snapshots, not one event per engine call."""
@@ -113,12 +139,11 @@ class ScannerManager:
         if not force and now - self._last_perf_publish < 0.8:
             return
         self._last_perf_publish = now
-        snapshot = self._performance.snapshot(
-            known_targets=self._known_targets,
-            discovery_complete=self._discovery_closed,
-            allow_estimate=not self._cancel.is_set(),
-        )
-        self.event_bus.publish(ScanEvent("performance", snapshot))
+        self.event_bus.publish(ScanEvent(
+            "performance", self._performance_payload(
+                allow_estimate=not self._cancel.is_set()
+            ),
+        ))
 
     def pause(self) -> None:
         """Stop submitting more files; already running tasks may finish."""
@@ -282,10 +307,8 @@ class ScannerManager:
                 "discovered": summary.discovered_files, "scanned": summary.scanned_files,
                 "finding_files": summary.finding_files, "errors": summary.errors,
                 "omitted_checks": summary.omitted_checks,
-                "performance": self._performance.snapshot(
-                    known_targets=self._known_targets,
-                    discovery_complete=self._discovery_closed,
-                    allow_estimate=False,
+                "performance": self._performance_payload(
+                    allow_estimate=False
                 ),
             }))
         return summary

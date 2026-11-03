@@ -61,8 +61,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --json tagName *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $releasesJson = gh release list --repo "$env:GITHUB_REPOSITORY" --json tagName --limit 100
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Cannot check existing releases. Aborting before building to avoid unintended overwrites.'
+          }
+          $existing = @($releasesJson | ConvertFrom-Json)
+          if (@($existing | Where-Object { $_.tagName -eq $env:RELEASE_TAG }).Count -gt 0) {
             throw "Release $env:RELEASE_TAG already exists. Increment the version; releases are never overwritten."
           }
 

@@ -36,8 +36,9 @@ jobs:
         shell: pwsh
         env:
           RELEASE_INPUT: ${{ inputs.version }}
+          RELEASE_EVENT: ${{ github.event_name }}
         run: |
-          if (${{ toJSON(github.event_name) }} -eq 'workflow_dispatch' -and
+          if ($env:RELEASE_EVENT -eq 'workflow_dispatch' -and
               $env:GITHUB_REF -ne 'refs/heads/main') {
             throw 'Manual releases must run from the main branch.'
           }

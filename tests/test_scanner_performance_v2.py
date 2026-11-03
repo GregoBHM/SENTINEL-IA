@@ -68,9 +68,11 @@ def test_historical_database_preserves_schema_and_metrics(tmp_path: Path) -> Non
         "hash": {
             "checks": 7, "completed": 6, "skipped": 1, "errors": 0,
             "duration_seconds": 1.25, "input_size_bytes": 50,
+            "signals": 3,
         }
     })
     again = SQLiteStore(db.path)
     saved = again.get_engine_metrics("historic")
     assert saved[0]["duration_seconds"] == 1.25
     assert saved[0]["skipped"] == 1
+    assert saved[0]["signals"] == 3

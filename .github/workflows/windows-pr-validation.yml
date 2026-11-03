@@ -38,3 +38,14 @@ jobs:
           name: sentinel-oneguard-ui-previews
           path: artifacts/gui-previews/*.png
           if-no-files-found: error
+      - name: Upload unsigned Windows EXE (experimental — test in VM)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SentinelOneGuard-Windows-EXE-Experimental
+          path: |
+            dist/SentinelOneGuard.exe
+            dist/SentinelOneGuard.sha256.txt
+            docs/BUILD_WINDOWS.md
+          if-no-files-found: error
+          retention-days: 30

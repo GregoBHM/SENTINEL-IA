@@ -31,6 +31,13 @@ class SQLiteStore:
         with self.connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript((Path(__file__).parent / "schema.sql").read_text(encoding="utf-8"))
+            # Older user databases require an additive, backward-compatible migration.
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(scan_sessions)")}
+            if "omitted_checks" not in columns:
+                conn.execute(
+                    "ALTER TABLE scan_sessions ADD COLUMN omitted_checks "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
@@ -61,10 +68,11 @@ class SQLiteStore:
         with self.connection() as conn:
             conn.execute(
                 """UPDATE scan_sessions SET finished_at=?, status=?, discovered_files=?,
-                   scanned_files=?, finding_files=?, errors=? WHERE id=?""",
+                   scanned_files=?, finding_files=?, errors=?, omitted_checks=?
+                   WHERE id=?""",
                 (utc_now(), summary.status.value, summary.discovered_files,
                  summary.scanned_files, summary.finding_files, summary.errors,
-                 summary.session_id),
+                 summary.omitted_checks, summary.session_id),
             )
 
     def record_target(
@@ -77,6 +85,21 @@ class SQLiteStore:
                 """INSERT OR REPLACE INTO scan_targets
                    (session_id,target_path,status,sha256,error) VALUES(?,?,?,?,?)""",
                 (session_id, str(path), status, sha256, error),
+            )
+
+    def record_coverage(
+        self, session_id: str, path: Path, engine: str, code: str,
+        params: dict[str, Any], detail: str,
+    ) -> None:
+        """Persist an omitted engine check without implying a malware finding."""
+        with self.connection() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO scan_coverage
+                   (session_id,target_path,engine,event_code,params_json,detail,recorded_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (session_id, str(path), engine, code,
+                 json.dumps(params, ensure_ascii=False, default=str),
+                 detail, utc_now()),
             )
 
     def save_finding(self, session_id: str, finding: AggregatedFinding) -> None:

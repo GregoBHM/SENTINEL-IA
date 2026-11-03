@@ -35,11 +35,17 @@ def test_scan_metrics_render_known_only_without_claiming_global_eta(
         },
         "paused": False,
         "discovery_complete": False,
+        "remaining_known": 12,
+        "process_resources": {"cpu_percent": 12.5, "rss_bytes": 96 * 1024**2},
     }
     window._render_performance(payload)
     assert "Cola conocida" in window.eta_label.text()
     assert "se descubren" in window.eta_label.text()
     assert window.engine_perf_button.isEnabled()
+    assert "CPU 12.5%" in window.resources_label.text()
+    assert "96 MiB" in window.resources_label.text()
+    assert "12" in window.pending_label.text()
+
     window._complete({
         "status": "completed", "scanned": 0, "errors": 0,
         "performance": {**payload, "eta": None, "discovery_complete": True},

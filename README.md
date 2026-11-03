@@ -1,4 +1,12 @@
-# Sentinel OneGuard — Entrega final de código v0.6.0
+# Sentinel OneGuard — Escáner antimalware experimental para Windows
+
+### Descarga Windows · v0.6.0-beta.1
+
+[**Descargar SentinelOneGuard.exe (Windows 10/11 x64)**](https://github.com/GregoBHM/SENTINEL-IA/releases/download/v0.6.0-beta.1/SentinelOneGuard.exe)
+&nbsp; · &nbsp; [Ver la versión en Releases](https://github.com/GregoBHM/SENTINEL-IA/releases/tag/v0.6.0-beta.1)
+&nbsp; · &nbsp; [SHA-256](https://github.com/GregoBHM/SENTINEL-IA/releases/download/v0.6.0-beta.1/SentinelOneGuard.sha256.txt)
+
+> **PRE-RELEASE EXPERIMENTAL — No es un antivirus de producción.** Ejecuta primero en una VM con snapshot. La mitigación no está validada para recuperar equipos comprometidos y no sustituye Microsoft Defender.
 
 > **ESTADO: PROTOTIPO. No está listo para desinfectar un equipo comprometido de verdad.** No hay protección en tiempo real, no sustituye Microsoft Defender, existen falsos positivos y negativos, el análisis puede ser parcial y no permite declarar Windows limpio.
 

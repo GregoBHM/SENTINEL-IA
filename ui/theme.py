@@ -14,7 +14,6 @@ QWidget { color: #E9F1F7; font-family: 'Segoe UI', 'Inter', sans-serif; font-siz
 QMainWindow, QDialog, QWidget#RootSurface, QWidget#PageSurface, QStackedWidget { background: #0B111A; }
 QLabel { background: transparent; border: none; padding: 0; }
 QScrollArea { background: #0B111A; border: none; }
-QScrollArea > QWidget > QWidget { background: #0B111A; }
 QFrame#Sidebar { background: #101925; border-right: 1px solid #263647; }
 QFrame#Panel, QFrame#Metric, QFrame#WizardPanel, QFrame#Insight { background: #141F2D; border: 1px solid #263647; border-radius: 13px; }
 QFrame#Hero { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #173448, stop:0.5 #123041, stop:1 #172331); border: 1px solid #2A5062; border-radius: 17px; }

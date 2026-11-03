@@ -21,6 +21,21 @@ jobs:
       - name: Run unit tests, GUI smoke and validate Windows package
         shell: pwsh
         run: .\build_windows.ps1
+      - name: Measure synthetic local hash throughput
+        if: success()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'artifacts/performance' -Force | Out-Null
+          .\.venv\Scripts\python.exe -m tools.benchmark_scanner --files 150 --workers 3 | Out-File -FilePath 'artifacts/performance/hash-baseline.json' -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic hash benchmark failed.' }
+          Get-Content 'artifacts/performance/hash-baseline.json'
+      - name: Upload synthetic performance baseline
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-oneguard-performance-baseline
+          path: artifacts/performance/hash-baseline.json
+          if-no-files-found: error
       - name: Show SHA-256 for unsigned experimental binary
         if: success()
         shell: pwsh

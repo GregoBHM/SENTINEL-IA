@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS scan_engine_metrics (
     errors INTEGER NOT NULL DEFAULT 0,
     duration_seconds REAL NOT NULL DEFAULT 0,
     input_size_bytes INTEGER NOT NULL DEFAULT 0,
+    signals INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(session_id, engine)
 );
 CREATE INDEX IF NOT EXISTS ix_engine_metrics_session ON scan_engine_metrics(session_id);

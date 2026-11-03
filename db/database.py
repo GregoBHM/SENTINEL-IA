@@ -85,14 +85,15 @@ class SQLiteStore:
             conn.executemany(
                 """INSERT OR REPLACE INTO scan_engine_metrics
                    (session_id,engine,checks,completed,skipped,errors,
-                    duration_seconds,input_size_bytes)
-                   VALUES(?,?,?,?,?,?,?,?)""",
+                    duration_seconds,input_size_bytes,signals)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
                 [
                     (session_id, engine, int(row.get("checks", 0)),
                      int(row.get("completed", 0)), int(row.get("skipped", 0)),
                      int(row.get("errors", 0)),
                      float(row.get("duration_seconds", 0.0)),
-                     int(row.get("input_size_bytes", 0)))
+                     int(row.get("input_size_bytes", 0)),
+                     int(row.get("signals", 0)))
                     for engine, row in metrics.items()
                 ],
             )
@@ -103,7 +104,7 @@ class SQLiteStore:
             return [
                 dict(row) for row in conn.execute(
                     """SELECT engine,checks,completed,skipped,errors,
-                              duration_seconds,input_size_bytes
+                              duration_seconds,input_size_bytes,signals
                        FROM scan_engine_metrics WHERE session_id=?
                        ORDER BY duration_seconds DESC""",
                     (session_id,),

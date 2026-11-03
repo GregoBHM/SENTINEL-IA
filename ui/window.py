@@ -50,6 +50,7 @@ def label(text: str, style: str = "Muted", *, wrap: bool = True) -> QLabel:
     item = QLabel(text)
     item.setObjectName(style)
     item.setWordWrap(wrap)
+    item.setTextFormat(Qt.TextFormat.PlainText)
     item.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return item
 
@@ -67,9 +68,10 @@ def panel(layout: QVBoxLayout | QHBoxLayout | QGridLayout, name: str = "Panel") 
 def vertical_page() -> tuple[QWidget, QVBoxLayout]:
     """Provide one spacious scroll-friendly page container."""
     page = QWidget()
+    page.setObjectName("PageSurface")
     layout = QVBoxLayout(page)
-    layout.setContentsMargins(28, 25, 28, 26)
-    layout.setSpacing(20)
+    layout.setContentsMargins(26, 24, 26, 22)
+    layout.setSpacing(16)
     return page, layout
 
 
@@ -219,7 +221,7 @@ class OneGuardWindow(QMainWindow):
         self.setWindowTitle("Sentinel OneGuard · Investigación de amenazas")
         self.setWindowIcon(QIcon(str(icon_path())))
         self.resize(1390, 900)
-        self.setMinimumSize(1100, 720)
+        self.setMinimumSize(1050, 680)
         self._setup_shell()
         self._setup_home()
         self._setup_scan()
@@ -237,22 +239,23 @@ class OneGuardWindow(QMainWindow):
     def _setup_shell(self) -> None:
         """Create the fixed sidebar and independent content stack."""
         root = QWidget()
+        root.setObjectName("RootSurface")
         outer = QHBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(218)
+        sidebar.setFixedWidth(236)
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(15, 28, 15, 20)
-        side.setSpacing(8)
+        side.setContentsMargins(18, 23, 18, 17)
+        side.setSpacing(7)
         brand_bar = QHBoxLayout()
         brand_mark = QLabel()
         brand_mark.setObjectName("BrandMark")
-        brand_mark.setFixedSize(48, 48)
+        brand_mark.setFixedSize(44, 44)
         pixmap = QPixmap(str(logo_path()))
         if not pixmap.isNull():
-            brand_mark.setPixmap(pixmap.scaled(48, 48,
+            brand_mark.setPixmap(pixmap.scaled(44, 44,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation))
         brand_bar.addWidget(brand_mark)
@@ -263,11 +266,11 @@ class OneGuardWindow(QMainWindow):
         brand_bar.addLayout(brand_text)
         brand_bar.addStretch()
         side.addLayout(brand_bar)
-        side.addWidget(label("ANTIMALWARE  /  INVESTIGACIÓN", "Eyebrow"))
-        side.addSpacing(32)
+        side.addWidget(label("SEGURIDAD / INVESTIGACIÓN", "Eyebrow", wrap=False))
+        side.addSpacing(20)
         self.nav_buttons = []
         for index, title in enumerate(self.PAGE_NAMES):
-            item = QPushButton("  " + title)
+            item = QPushButton(title)
             item.setObjectName("Nav")
             item.setCursor(Qt.CursorShape.PointingHandCursor)
             item.clicked.connect(lambda _, i=index: self._switch_page(i))
@@ -275,11 +278,14 @@ class OneGuardWindow(QMainWindow):
             self.nav_buttons.append(item)
         side.addStretch()
         note = QVBoxLayout()
-        note.addWidget(label("ESTADO DEL DISPOSITIVO", "Eyebrow"))
-        self.sidebar_status = label("Sin analizar. No se puede confirmar la seguridad del equipo.")
+        note.addWidget(label("ESTADO DEL EQUIPO", "Eyebrow", wrap=False))
+        self.sidebar_status = label("Sin evaluación reciente.")
+        self.sidebar_status.setToolTip(
+            "Un resultado sin hallazgos no certifica que Windows esté limpio."
+        )
         note.addWidget(self.sidebar_status)
         side.addWidget(panel(note))
-        side.addWidget(label("FASE 5   /   ACCIONES CONFIRMADAS", "Eyebrow"))
+        side.addWidget(label("MITIGACIÓN EXPERIMENTAL", "Eyebrow", wrap=False))
         self.pages = QStackedWidget()
         for _ in self.PAGE_NAMES:
             self.pages.addWidget(QWidget())
@@ -671,7 +677,7 @@ class OneGuardWindow(QMainWindow):
         self.pause_button.setText("Pausar")
         self.cancel_button.setEnabled(True)
         self.new_scan_button.setEnabled(False)
-        self.sidebar_status.setText("Análisis en curso; diagnóstico pendiente")
+        self.sidebar_status.setText("Análisis en curso")
         self._log("INFO", "Consentimiento recibido. Análisis de solo lectura iniciado; la respuesta es opcional.")
 
     def toggle_pause(self) -> None:
@@ -850,7 +856,11 @@ class OneGuardWindow(QMainWindow):
             "cancelled": "Análisis cancelado · resultados parciales",
             "failed": "Análisis fallido · resultados no concluyentes",
         }.get(status, "Estado desconocido"))
-        self.sidebar_status.setText(self.scan_status.text())
+        self.sidebar_status.setText({
+            "completed": "Análisis finalizado\nRevisar evidencias",
+            "cancelled": "Cancelado\nCobertura parcial",
+            "failed": "Falló\nNo concluyente",
+        }.get(status, "Estado desconocido"))
         self.pause_button.setEnabled(False)
         self.cancel_button.setEnabled(False)
         self.new_scan_button.setEnabled(True)

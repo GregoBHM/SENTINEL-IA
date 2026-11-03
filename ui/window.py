@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 from queue import Queue
 from datetime import datetime
+from time import monotonic
 from queue import Empty
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from app.config import ScanConfig
 from core.models import ScanEvent
+from core.scan_clock import ScanClock, format_duration
 from core.quarantine import QuarantineService
 from core.report import ReportService
 from core.recovery_guidance import guidance_for
@@ -38,6 +40,8 @@ from ui.branding import logo_path, icon_path
 from ui.controller import ScanController
 from ui.repository import FindingRow, HistoryRepository
 from ui.theme import COLORS, severity_color
+from ui.scan_messages import explain_scan_error
+from ui.profiles import ScanPlan
 from ui.wizard import ConsentWizard
 
 LOG = logging.getLogger("oneguard.ui")
@@ -48,6 +52,7 @@ def label(text: str, style: str = "Muted", *, wrap: bool = True) -> QLabel:
     item = QLabel(text)
     item.setObjectName(style)
     item.setWordWrap(wrap)
+    item.setTextFormat(Qt.TextFormat.PlainText)
     item.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return item
 
@@ -65,9 +70,10 @@ def panel(layout: QVBoxLayout | QHBoxLayout | QGridLayout, name: str = "Panel") 
 def vertical_page() -> tuple[QWidget, QVBoxLayout]:
     """Provide one spacious scroll-friendly page container."""
     page = QWidget()
+    page.setObjectName("PageSurface")
     layout = QVBoxLayout(page)
-    layout.setContentsMargins(28, 25, 28, 26)
-    layout.setSpacing(20)
+    layout.setContentsMargins(26, 24, 26, 22)
+    layout.setSpacing(16)
     return page, layout
 
 
@@ -147,6 +153,17 @@ class FindingFilter(QSortFilterProxyModel):
                              " ".join(record.engines))).lower()
         return self.search.lower() in combined
 
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
+        """Sort risk numerically and other columns by readable text."""
+        source = self.sourceModel()
+        if source is None:
+            return False
+        if left.column() == 0:
+            return source.rows[left.row()].score < source.rows[right.row()].score
+        a = str(source.data(left, Qt.ItemDataRole.DisplayRole) or "").casefold()
+        b = str(source.data(right, Qt.ItemDataRole.DisplayRole) or "").casefold()
+        return a < b
+
     def update_filters(self, severity: str, threat_type: str, search: str) -> None:
         """Update model filtering without costly independent SQL queries."""
         self.severity = severity
@@ -184,6 +201,10 @@ class OneGuardWindow(QMainWindow):
         self.config = config or ScanConfig()
         self.repository = HistoryRepository(self.config.database_path)
         self.controller = ScanController(self.config)
+        self.scan_clock = ScanClock()
+        self._last_clock_refresh = 0.0
+        self._phase_started_at = monotonic()
+        self._phase_finished_at: float | None = None
         self.session_id: str | None = None
         self.vt_key = ""
         self.mb_key = ""
@@ -202,7 +223,7 @@ class OneGuardWindow(QMainWindow):
         self.setWindowTitle("Sentinel OneGuard · Investigación de amenazas")
         self.setWindowIcon(QIcon(str(icon_path())))
         self.resize(1390, 900)
-        self.setMinimumSize(1100, 720)
+        self.setMinimumSize(1050, 680)
         self._setup_shell()
         self._setup_home()
         self._setup_scan()
@@ -220,22 +241,23 @@ class OneGuardWindow(QMainWindow):
     def _setup_shell(self) -> None:
         """Create the fixed sidebar and independent content stack."""
         root = QWidget()
+        root.setObjectName("RootSurface")
         outer = QHBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(218)
+        sidebar.setFixedWidth(236)
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(15, 28, 15, 20)
-        side.setSpacing(8)
+        side.setContentsMargins(18, 23, 18, 17)
+        side.setSpacing(7)
         brand_bar = QHBoxLayout()
         brand_mark = QLabel()
         brand_mark.setObjectName("BrandMark")
-        brand_mark.setFixedSize(48, 48)
+        brand_mark.setFixedSize(44, 44)
         pixmap = QPixmap(str(logo_path()))
         if not pixmap.isNull():
-            brand_mark.setPixmap(pixmap.scaled(48, 48,
+            brand_mark.setPixmap(pixmap.scaled(44, 44,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation))
         brand_bar.addWidget(brand_mark)
@@ -246,11 +268,11 @@ class OneGuardWindow(QMainWindow):
         brand_bar.addLayout(brand_text)
         brand_bar.addStretch()
         side.addLayout(brand_bar)
-        side.addWidget(label("ANTIMALWARE  /  INVESTIGACIÓN", "Eyebrow"))
-        side.addSpacing(32)
+        side.addWidget(label("CENTRO DE ANÁLISIS", "Eyebrow", wrap=False))
+        side.addSpacing(20)
         self.nav_buttons = []
         for index, title in enumerate(self.PAGE_NAMES):
-            item = QPushButton("  " + title)
+            item = QPushButton(title)
             item.setObjectName("Nav")
             item.setCursor(Qt.CursorShape.PointingHandCursor)
             item.clicked.connect(lambda _, i=index: self._switch_page(i))
@@ -258,11 +280,14 @@ class OneGuardWindow(QMainWindow):
             self.nav_buttons.append(item)
         side.addStretch()
         note = QVBoxLayout()
-        note.addWidget(label("ESTADO DEL DISPOSITIVO", "Eyebrow"))
-        self.sidebar_status = label("Sin analizar. No se puede confirmar la seguridad del equipo.")
+        note.addWidget(label("ESTADO", "Eyebrow", wrap=False))
+        self.sidebar_status = label("Sin evaluación reciente.")
+        self.sidebar_status.setToolTip(
+            "Un resultado sin hallazgos no certifica que Windows esté limpio."
+        )
         note.addWidget(self.sidebar_status)
         side.addWidget(panel(note))
-        side.addWidget(label("FASE 5   /   ACCIONES CONFIRMADAS", "Eyebrow"))
+        side.addWidget(label("MITIGACIÓN MANUAL", "Eyebrow", wrap=False))
         self.pages = QStackedWidget()
         for _ in self.PAGE_NAMES:
             self.pages.addWidget(QWidget())
@@ -283,39 +308,56 @@ class OneGuardWindow(QMainWindow):
             self.refresh_quarantine()
 
     def _setup_home(self) -> None:
-        """Show a distinct quiet command centre instead of fictional health claims."""
+        """Provide action-first navigation without pretending the device is safe."""
         page, column = vertical_page()
-        column.addWidget(label("CENTRO DE INVESTIGACIÓN", "Eyebrow"))
-        column.addWidget(label("Descubre qué ocurre en tu Windows.", "Title"))
+        column.addWidget(label("CENTRO DE SEGURIDAD  /  SENTINEL ONEGUARD", "Eyebrow"))
+        column.addWidget(label("Investiga antes de actuar.", "Title"))
         column.addWidget(label(
-            "Analiza archivos, procesos y persistencia; interpreta las evidencias y "
-            "decide los siguientes pasos. No se modifica ningún objeto sin tu autorización."))
-        hero_layout = QVBoxLayout()
-        hero_layout.addWidget(label("UN DIAGNÓSTICO QUE EXPLICA", "Eyebrow"))
-        hero_layout.addWidget(label("No basta con encontrar un archivo sospechoso.", "Heading"))
-        hero_layout.addWidget(label(
-            "OneGuard relaciona los indicadores disponibles para ayudar a investigar "
-            "la causa probable de una infección. No garantiza detectar toda amenaza "
-            "ni demostrar el punto de entrada sin registros históricos."))
-        start = QPushButton("Configurar nuevo análisis    →")
-        start.setObjectName("Primary")
-        start.clicked.connect(self.open_wizard)
-        hero_layout.addWidget(start, alignment=Qt.AlignmentFlag.AlignLeft)
-        column.addWidget(panel(hero_layout, "Hero"))
-        synopsis = QHBoxLayout()
-        for heading, details in (
-            ("01 / INSPECCIONAR", "Hashes, YARA, ejecutables PE, scripts y comprimidos."),
-            ("02 / CORRELACIONAR", "Procesos y persistencia con relaciones respaldadas por evidencia."),
-            ("03 / EXPLICAR", "Severidad, confianza, motores y límites de cada resultado."),
+            "Escanea, compara evidencias y elige acciones de respuesta. "
+            "Un resultado sin detecciones nunca certifica que Windows esté limpio."
+        ))
+
+        overview = QVBoxLayout()
+        overview.addWidget(label("ÚLTIMA EVALUACIÓN", "Eyebrow"))
+        self.home_status = label("Todavía no se ha evaluado este equipo.", "SectionHeading")
+        self.home_last_scan = label(
+            "Inicia un análisis para registrar hallazgos, errores y cobertura real."
+        )
+        overview.addWidget(self.home_status)
+        overview.addWidget(self.home_last_scan)
+        column.addWidget(panel(overview, "Hero"))
+
+        column.addWidget(label("ELIGE CÓMO INSPECCIONAR", "Eyebrow"))
+        options = QHBoxLayout()
+        for kind, heading, detail in (
+            ("quick", "Rápido", "Ubicaciones frecuentes y carpetas críticas del usuario."),
+            ("full", "Completo", "Unidades fijas locales; duración variable."),
+            ("custom", "Personalizado", "Selecciona archivos o carpetas concretas."),
         ):
-            block = QVBoxLayout()
-            block.addWidget(label(heading, "Eyebrow"))
-            block.addWidget(label(details))
-            synopsis.addWidget(panel(block), 1)
-        column.addLayout(synopsis)
-        column.addWidget(label(
-            "Fase 5: las acciones permitidas requieren confirmación y pueden estar limitadas "
-            "por la ruta, identidad y cobertura del análisis. No sustituye Microsoft Defender."))
+            contents = QVBoxLayout()
+            contents.addWidget(label(heading.upper(), "Eyebrow"))
+            contents.addWidget(label(heading, "Heading"))
+            contents.addWidget(label(detail))
+            contents.addStretch()
+            button = QPushButton("Configurar análisis")
+            button.setObjectName("Primary" if kind == "quick" else "ScanAction")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, selected=kind: self._open_with_profile(selected)
+            )
+            contents.addWidget(button)
+            options.addWidget(panel(contents), 1)
+        column.addLayout(options)
+
+        foot = QHBoxLayout()
+        foot.addWidget(label(
+            "DETECTAR → INVESTIGAR → REVISAR → MITIGAR  ·  "
+            "Nada se elimina sin aprobación.", "Eyebrow"
+        ), 1)
+        history = QPushButton("Consultar historial")
+        history.clicked.connect(lambda: self._switch_page(4))
+        foot.addWidget(history)
+        column.addLayout(foot)
         column.addStretch()
         self.pages.removeWidget(self.pages.widget(0))
         self.pages.insertWidget(0, page)
@@ -336,7 +378,7 @@ class OneGuardWindow(QMainWindow):
         upper.addWidget(self.new_scan_button, alignment=Qt.AlignmentFlag.AlignBottom)
         column.addLayout(upper)
         metrics = QHBoxLayout()
-        self.scanned_tile = MetricTile("Archivos inspeccionados", COLORS["accent"])
+        self.scanned_tile = MetricTile("Inspeccionados", COLORS["accent"])
         self.threats_tile = MetricTile("Hallazgos", COLORS["danger"])
         self.partial_tile = MetricTile("Advertencias", COLORS["amber"])
         self.error_tile = MetricTile("Errores", COLORS["muted"])
@@ -349,6 +391,18 @@ class OneGuardWindow(QMainWindow):
         self.scan_phase = label("Preparado para iniciar")
         self.scan_phase.setObjectName("SectionHeading")
         work_layout.addWidget(self.scan_phase)
+        self.failure_hint = label("", "FailureHint")
+        self.failure_hint.setVisible(False)
+        work_layout.addWidget(self.failure_hint)
+        timing = QHBoxLayout()
+        self.elapsed_label = label("Transcurrido  00:00", "Eyebrow")
+        self.rate_label = label("Ritmo observado  — archivos/s", "Eyebrow")
+        timing.addWidget(self.elapsed_label)
+        timing.addStretch()
+        timing.addWidget(self.rate_label)
+        work_layout.addLayout(timing)
+        self.phase_time_label = label("Fase en curso  00:00")
+        work_layout.addWidget(self.phase_time_label)
         self.global_label = label("Progreso global · aún no disponible")
         work_layout.addWidget(self.global_label)
         self.global_progress = QProgressBar()
@@ -366,18 +420,30 @@ class OneGuardWindow(QMainWindow):
         work_layout.addWidget(self.current_target)
         center.addWidget(panel(work_layout), 3)
         notes = QVBoxLayout()
-        notes.addWidget(label("COBERTURA", "Eyebrow"))
-        notes.addWidget(label("Hash + reputación por SHA-256"))
-        notes.addWidget(label("YARA · si está disponible"))
-        notes.addWidget(label("PE · DLL · scripts · comprimidos"))
-        notes.addWidget(label("Procesos / persistencia · con permiso"))
+        notes.addWidget(label("ALCANCE AUTORIZADO", "Eyebrow", wrap=False))
+        self.coverage_files = label("Archivos · aún sin selección")
+        self.coverage_processes = label("Procesos y red · sin autorización")
+        self.coverage_persistence = label("Persistencia · sin autorización")
+        self.coverage_online = label("Reputación · local")
+        for coverage in (
+            self.coverage_files, self.coverage_processes,
+            self.coverage_persistence, self.coverage_online,
+        ):
+            notes.addWidget(coverage)
         notes.addStretch()
-        notes.addWidget(label("Cero hallazgos ≠ equipo limpio", "WarningText"))
+        notes.addWidget(label(
+            "Los motores disponibles y las omisiones se registran "
+            "durante el análisis.", "SmallHelp"
+        ))
+        notes.addWidget(label("Sin hallazgos ≠ equipo limpio", "WarningText"))
         center.addWidget(panel(notes), 2)
         column.addLayout(center)
         log_title = QHBoxLayout()
-        log_title.addWidget(label("REGISTRO DE ACTIVIDAD", "Eyebrow"))
+        log_title.addWidget(label("REGISTRO DE ACTIVIDAD", "Eyebrow", wrap=False))
         log_title.addStretch()
+        self.console_toggle = QPushButton("Ocultar registro")
+        self.console_toggle.clicked.connect(self.toggle_console)
+        log_title.addWidget(self.console_toggle)
         self.pause_button = QPushButton("Pausar")
         self.cancel_button = QPushButton("Cancelar")
         self.cancel_button.setObjectName("Danger")
@@ -389,13 +455,23 @@ class OneGuardWindow(QMainWindow):
         log_title.addWidget(self.cancel_button)
         column.addLayout(log_title)
         self.console = QPlainTextEdit()
+        self.console.setObjectName("EventConsole")
         self.console.setReadOnly(True)
         self.console.setMaximumBlockCount(800)
-        self.console.setMinimumHeight(220)
+        self.console.setMinimumHeight(150)
+        self.console.setMaximumHeight(245)
         self.console.setFont(QFont("Consolas", 10))
-        column.addWidget(self.console, 1)
+        column.addWidget(self.console)
+        column.addStretch(1)
+        scan_scroll = QScrollArea()
+        scan_scroll.setWidgetResizable(True)
+        scan_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scan_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        scan_scroll.setWidget(page)
         self.pages.removeWidget(self.pages.widget(1))
-        self.pages.insertWidget(1, page)
+        self.pages.insertWidget(1, scan_scroll)
 
     def _setup_findings(self) -> None:
         """Provide filterable persisted findings with contextual evidence detail."""
@@ -437,7 +513,9 @@ class OneGuardWindow(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(37)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setSortingEnabled(False)
+        self.proxy.setDynamicSortFilter(True)
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(0, Qt.SortOrder.DescendingOrder)
         self.table.setColumnWidth(0, 112)
         self.table.setColumnWidth(1, 340)
         self.table.setColumnWidth(2, 170)
@@ -505,9 +583,9 @@ class OneGuardWindow(QMainWindow):
         column.addWidget(label("HISTORIAL LOCAL", "Eyebrow"))
         column.addWidget(label("Análisis anteriores", "Title"))
         column.addWidget(label("La base de datos se mantiene en tu equipo. Doble clic para revisar hallazgos."))
-        self.history_table = QTableWidget(0, 6)
+        self.history_table = QTableWidget(0, 7)
         self.history_table.setHorizontalHeaderLabels([
-            "Inicio", "Estado", "Archivos", "Objetivos con hallazgos", "Errores", "ID",
+            "Inicio", "Duración", "Estado", "Archivos", "Hallazgos", "Errores", "ID",
         ])
         self.history_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.history_table.horizontalHeader().setStretchLastSection(True)
@@ -564,14 +642,23 @@ class OneGuardWindow(QMainWindow):
         QMessageBox.information(self, "Configuración", "Claves aplicadas en memoria para esta ejecución.")
 
     def open_wizard(self) -> None:
-        """Require opt-in before invoking any scanner engine."""
+        """Open the standard opt-in scan wizard."""
+        self._open_with_profile("quick")
+
+    def _open_with_profile(self, profile: str) -> None:
+        """Preselect one scan type while still requiring all user permissions."""
         if self.controller.running:
             QMessageBox.information(self, "Escaneo activo", "Cancela o termina el análisis actual antes de iniciar otro.")
             return
         wizard = ConsentWizard(self)
+        profile_buttons = {
+            "quick": wizard.quick, "full": wizard.full, "custom": wizard.custom,
+        }
+        profile_buttons.get(profile, wizard.quick).setChecked(True)
         if wizard.exec() != ConsentWizard.DialogCode.Accepted or not wizard.plan:
             return
         self._prepare_live_scan()
+        self._show_scan_scope(wizard.plan)
         try:
             self.controller.start(
                 wizard.plan, vt_key=self.vt_key or self.config.vt_api_key,
@@ -581,6 +668,36 @@ class OneGuardWindow(QMainWindow):
             QMessageBox.warning(self, "No se pudo iniciar", str(exc))
             return
         self._switch_page(1)
+
+    def toggle_console(self) -> None:
+        """Expand or collapse the activity log without losing scan events."""
+        visible = not self.console.isVisible()
+        self.console.setVisible(visible)
+        self.console_toggle.setText(
+            "Ocultar registro" if visible else "Mostrar registro"
+        )
+
+    def _show_scan_scope(self, plan: ScanPlan) -> None:
+        """Present the authorized scope, not unverified detector availability."""
+        names = {
+            "quick": "Rápido", "full": "Completo", "custom": "Personalizado",
+        }
+        scope = names.get(plan.profile, "Seleccionado")
+        self.coverage_files.setText(
+            f"Archivos · {scope} · {len(plan.roots)} ubicaciones"
+        )
+        self.coverage_processes.setText(
+            "Procesos y red · autorizados" if plan.processes else
+            "Procesos y red · no autorizados"
+        )
+        self.coverage_persistence.setText(
+            "Persistencia · autorizada" if plan.persistence else
+            "Persistencia · no autorizada"
+        )
+        self.coverage_online.setText(
+            "Reputación · consulta de hashes autorizada" if plan.online else
+            "Reputación · solo local"
+        )
 
     def _prepare_live_scan(self) -> None:
         """Reset only session-specific UI data, never erase stored results."""
@@ -593,6 +710,8 @@ class OneGuardWindow(QMainWindow):
         self._view_mode = "live"
         self._display_session_id = None
         self.session_id = None
+        self._show_rows([])
+        self.results_caption.setText("Análisis en preparación · todavía no hay resultados.")
         self.scanned_tile.set_count(0)
         self.threats_tile.set_count(0)
         self.partial_tile.set_count(0)
@@ -600,16 +719,27 @@ class OneGuardWindow(QMainWindow):
         self.global_progress.setRange(0, 0)
         self.phase_progress.setRange(0, 100)
         self.phase_progress.setValue(0)
-        self.global_label.setText("Progreso global: descubriendo objetivos (indeterminado)")
-        self.phase_label.setText("Tareas conocidas · 0 / 0")
+        self.global_label.setText("Descubriendo objetivos · tiempo restante no estimable")
+        self.scan_clock.reset()
+        self._last_clock_refresh = 0.0
+        self.elapsed_label.setText("Transcurrido  00:00")
+        self.rate_label.setText("Ritmo observado  — archivos/s")
+        self._phase_started_at = monotonic()
+        self._phase_finished_at = None
+        self.phase_time_label.setText("Fase en curso  00:00")
+        self.phase_label.setText("Trabajo identificado · 0 / 0 (total dinámico)")
         self.scan_phase.setText("Preparando motores de detección")
+        self.failure_hint.setVisible(False)
+        self.failure_hint.clear()
+        self.console.setVisible(True)
+        self.console_toggle.setText("Ocultar registro")
         self.scan_status.setText("Preparando análisis…")
         self.console.clear()
         self.pause_button.setEnabled(False)
         self.pause_button.setText("Pausar")
         self.cancel_button.setEnabled(True)
         self.new_scan_button.setEnabled(False)
-        self.sidebar_status.setText("Análisis en curso; diagnóstico pendiente")
+        self.sidebar_status.setText("Análisis en curso")
         self._log("INFO", "Consentimiento recibido. Análisis de solo lectura iniciado; la respuesta es opcional.")
 
     def toggle_pause(self) -> None:
@@ -666,6 +796,32 @@ class OneGuardWindow(QMainWindow):
                 self._last_refresh_at = now
                 self._event_counter = 0
                 self._refresh_findings_safely()
+        self._update_scan_metrics()
+
+    def _update_scan_metrics(self, *, force: bool = False) -> None:
+        """Display observed elapsed time and throughput; never predict an ETA."""
+        if not self.controller.running and not self._completion_seen:
+            return
+        now = monotonic()
+        if not force and now - self._last_clock_refresh < 0.75:
+            return
+        self._last_clock_refresh = now
+        observed = self.scan_clock.snapshot()
+        self.elapsed_label.setText(
+            f"Transcurrido  {format_duration(observed.elapsed_seconds)}"
+            + (f" · pausa {format_duration(observed.paused_seconds)}"
+               if observed.paused_seconds > 0 else "")
+        )
+        self.rate_label.setText(
+            f"Ritmo observado  {observed.files_per_second:.1f} archivos/s"
+            if observed.active_seconds >= 1.0 else
+            "Ritmo observado  calculando…"
+        )
+        phase_end = self._phase_finished_at if self._phase_finished_at is not None else now
+        phase_elapsed = max(0.0, phase_end - self._phase_started_at)
+        self.phase_time_label.setText(
+            f"Fase en curso  {format_duration(phase_elapsed)}"
+        )
 
     def _apply_event(self, event: ScanEvent) -> None:
         """Apply one immutable core event on the GUI thread only."""
@@ -677,6 +833,7 @@ class OneGuardWindow(QMainWindow):
             self.pause_button.setEnabled(True)
             self._log("INFO", "Sesión " + self.session_id[:12] + " iniciada")
         elif kind == "phase":
+            self._phase_started_at = monotonic()
             self.scan_phase.setText(payload["name"])
             self._log("INFO", payload["name"])
         elif kind == "warning":
@@ -684,12 +841,17 @@ class OneGuardWindow(QMainWindow):
             self.partial_tile.set_count(self._seen_warnings)
             self._log("WARN", payload.get("message", "Cobertura parcial"))
         elif kind == "current_target":
-            self.current_target.setText("OBJETIVO ACTUAL   " + payload.get("path", ""))
+            self.current_target.setText(
+                "ÚLTIMO OBJETIVO ENVIADO A LA COLA   " + payload.get("path", "")
+            )
         elif kind == "finding":
             self._found += 1
             self.threats_tile.set_count(self._found)
             self._event_counter += 1
-            self._log("FIND", f"{payload.get('severity', '').upper()} · {payload.get('type')} · {payload.get('target')}")
+            severity = str(payload.get("severity", "info")).lower()
+            level = ("FIND" if severity in ("critical", "high") else
+                     "WARN" if severity in ("medium", "low") else "INFO")
+            self._log(level, f"{severity.upper()} · {payload.get('type')} · {payload.get('target')}")
         elif kind == "skipped":
             self._seen_warnings += 1
             self.partial_tile.set_count(self._seen_warnings)
@@ -698,19 +860,28 @@ class OneGuardWindow(QMainWindow):
         elif kind == "error":
             self._current_error_count += 1
             self.error_tile.set_count(self._current_error_count)
-            self._log("ERROR", payload.get("message", "Error no especificado"))
+            message = str(payload.get("message", "Error no especificado"))
+            self.failure_hint.setText(explain_scan_error(message))
+            self.failure_hint.setVisible(True)
+            self._log("ERROR", message)
         elif kind == "progress":
             done = int(payload.get("scanned", 0)) + int(payload.get("system_scanned", 0))
             known = int(payload.get("discovered", 0)) + int(payload.get("system_scanned", 0))
             self.scanned_tile.set_count(int(payload.get("scanned", 0)))
-            self.phase_label.setText(f"Objetivos conocidos · {done:,} / {known:,}".replace(",", "."))
+            self.scan_clock.set_processed(int(payload.get("scanned", 0)))
+            self.phase_label.setText(
+                f"Trabajo conocido · {done:,} / {known:,} (puede aumentar)"
+                .replace(",", ".")
+            )
             self.phase_progress.setRange(0, 100)
             # This is only a known-work indicator, not a global percentage.
             self.phase_progress.setValue(min(99, round(done / known * 100)) if known else 0)
         elif kind == "paused":
+            self.scan_clock.pause()
             self.scan_status.setText("Pausado (trabajos en curso pueden finalizar)")
             self._log("WARN", "Pausa cooperativa solicitada")
         elif kind == "resumed":
+            self.scan_clock.resume()
             self.scan_status.setText("Analizando")
             self._log("INFO", "Análisis reanudado")
         elif kind == "cancelling":
@@ -723,27 +894,59 @@ class OneGuardWindow(QMainWindow):
     def _complete(self, payload: dict) -> None:
         """Finalize UI controls and show real core status, even when cancelled."""
         self._completion_seen = True
+        # The final summary is authoritative if intermediate progress messages
+        # were dropped to keep the bounded event queue responsive.
+        final_scanned = int(payload.get("scanned", 0))
+        self.scanned_tile.set_count(final_scanned)
+        self.scan_clock.set_processed(final_scanned)
+        self.error_tile.set_count(int(payload.get("errors", self._current_error_count)))
+        summary = self.controller.last_summary
+        if summary is not None:
+            self.threats_tile.set_count(len(summary.findings))
+        self.scan_clock.finish()
+        self._phase_finished_at = monotonic()
+        self._update_scan_metrics(force=True)
         self._display_session_id = self.session_id
         status = str(payload.get("status", "failed"))
         self.global_progress.setRange(0, 100)
         self.global_progress.setValue(100 if status == "completed" else 0)
-        self.global_label.setText("Análisis finalizado" if status == "completed" else f"Análisis {status}; cobertura incompleta")
+        self.global_label.setText(
+            "Análisis terminado · comprobar archivos omitidos y advertencias"
+            if status == "completed" else
+            "Análisis interrumpido · cobertura incompleta; revisar registro"
+        )
         self.phase_progress.setValue(100 if status == "completed" else self.phase_progress.value())
+        if status == "failed" and not self.failure_hint.text():
+            self.failure_hint.setText(explain_scan_error(""))
+            self.failure_hint.setVisible(True)
+        elif status == "completed":
+            self.failure_hint.setVisible(False)
         self.scan_status.setText({
             "completed": "Análisis terminado · revisar cobertura y evidencias",
             "cancelled": "Análisis cancelado · resultados parciales",
             "failed": "Análisis fallido · resultados no concluyentes",
         }.get(status, "Estado desconocido"))
-        self.sidebar_status.setText(self.scan_status.text())
+        self.sidebar_status.setText({
+            "completed": "Análisis finalizado\nRevisar evidencias",
+            "cancelled": "Cancelado\nCobertura parcial",
+            "failed": "Falló\nNo concluyente",
+        }.get(status, "Estado desconocido"))
         self.pause_button.setEnabled(False)
         self.cancel_button.setEnabled(False)
         self.new_scan_button.setEnabled(True)
         self._log("OK" if status == "completed" else "WARN", self.scan_status.text())
         self._refresh_findings_safely()
         self.refresh_history()
-        if self.session_id:
-            self.results_caption.setText(f"Sesión {self.session_id[:12]} · {status} · resultados locales")
-        self._switch_page(2)
+        if self.session_id and self._last_fetch_count == 0:
+            self.results_caption.setText(
+                f"Sesión {self.session_id[:12]} · sin hallazgos visibles. "
+                "Revisa cobertura, advertencias y errores; no equivale a equipo limpio."
+            )
+        # Never redirect failed initialization to an empty results table.
+        if self.session_id and status in ("completed", "cancelled"):
+            self._switch_page(2)
+        else:
+            self._switch_page(1)
 
     def _refresh_findings_safely(self) -> None:
         """Fetch a bounded SQLite page; report lock problems without freezing UI."""
@@ -774,9 +977,13 @@ class OneGuardWindow(QMainWindow):
         self.type_filter.setCurrentIndex(index if index >= 0 else 0)
         self.type_filter.blockSignals(False)
         self._update_filter()
+        actionable = [r for r in rows if not r.suppressed and r.score >= 20]
+        severe = sum(r.severity in {"critical", "high"} for r in actionable)
         self.results_caption.setText(
-            f"{len(rows)} hallazgo(s) guardado(s), máximo 2.500 visibles. "
-            "Severidad ≠ certeza; revisar las evidencias.")
+            f"{len(rows)} hallazgos visibles · {severe} altos/críticos · "
+            f"{len(actionable)} requieren revisión. "
+            "Sin hallazgos no equivale a un equipo limpio."
+        )
 
     def _update_filter(self, *_args) -> None:
         """Apply active filters to the bounded in-memory table model."""
@@ -859,10 +1066,37 @@ class OneGuardWindow(QMainWindow):
         except (sqlite3.Error, OSError):
             return
         self.history_table.setRowCount(len(sessions))
+        if sessions:
+            latest = sessions[0]
+            state = {
+                "completed": "Finalizado (revisar cobertura)",
+                "cancelled": "Cancelado · cobertura parcial",
+                "failed": "Falló · diagnóstico no concluyente",
+                "running": "Interrumpido o todavía en curso",
+            }.get(latest.status, latest.status)
+            self.home_status.setText(f"Último análisis: {state}")
+            self.home_last_scan.setText(
+                f"{latest.started[:19].replace('T', ' ')} · "
+                f"{latest.scanned:,} archivos · {latest.finding_files} objetivos con hallazgos · "
+                f"{latest.errors} errores".replace(",", ".")
+            )
+        else:
+            self.home_status.setText("Todavía no se ha evaluado este equipo.")
+            self.home_last_scan.setText(
+                "Inicia un análisis; no se ha confirmado la seguridad del sistema."
+            )
         for row_index, record in enumerate(sessions):
+            try:
+                duration = (format_duration(
+                    (datetime.fromisoformat(record.finished)
+                     - datetime.fromisoformat(record.started)).total_seconds()
+                ) if record.finished else "En curso")
+            except ValueError:
+                duration = "No disponible"
             items = (
-                record.started[:19].replace("T", " "), record.status,
-                str(record.scanned), str(record.finding_files), str(record.errors), record.id,
+                record.started[:19].replace("T", " "), duration, record.status,
+                str(record.scanned), str(record.finding_files),
+                str(record.errors), record.id,
             )
             for column, value in enumerate(items):
                 item = QTableWidgetItem(value)
@@ -871,7 +1105,7 @@ class OneGuardWindow(QMainWindow):
 
     def open_historical_scan(self, index: QModelIndex) -> None:
         """Inspect one previous session without re-running any detection."""
-        item = self.history_table.item(index.row(), 5)
+        item = self.history_table.item(index.row(), 6)
         if not item:
             return
         session_id = item.text()

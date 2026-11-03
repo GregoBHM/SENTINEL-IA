@@ -1,0 +1,40 @@
+name: Windows PR validation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-smoke-and-build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout proposed changes
+        uses: actions/checkout@v4
+      - name: Install Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - name: Run unit tests, GUI smoke and validate Windows package
+        shell: pwsh
+        run: .\build_windows.ps1
+      - name: Show SHA-256 for unsigned experimental binary
+        if: success()
+        shell: pwsh
+        run: Get-Content .\dist\SentinelOneGuard.sha256.txt
+      - name: Capture GUI layout previews (no scanning, synthetic example)
+        if: success()
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: .\.venv\Scripts\python.exe -m tools.capture_gui_previews
+      - name: Upload GUI screenshots for visual QA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-oneguard-ui-previews
+          path: artifacts/gui-previews/*.png
+          if-no-files-found: error

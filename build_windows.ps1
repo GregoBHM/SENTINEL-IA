@@ -130,6 +130,8 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
 }
 & $venvPython 'tools\verify_windows_exe.py' $exe
 if ($LASTEXITCODE -ne 0) { throw 'El EXE no supero la comprobacion de icono, GUI y UAC.' }
+& $venvPython 'tools\check_frozen_assets.py' $exe
+if ($LASTEXITCODE -ne 0) { throw 'El EXE no contiene schema.sql, reglas o recursos necesarios.' }
 
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash
 "$hash  SentinelOneGuard.exe" | Set-Content -LiteralPath 'dist\SentinelOneGuard.sha256.txt' -Encoding ASCII

@@ -22,6 +22,7 @@ analysis = Analysis(
     datas=[
         (str(root / 'assets'), 'assets'),
         (str(root / 'rules' / 'bundled'), 'rules/bundled'),
+        (str(root / 'db' / 'schema.sql'), 'db'),
     ],
     hiddenimports=macro_imports,
     hookspath=[],

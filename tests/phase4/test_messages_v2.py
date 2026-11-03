@@ -23,7 +23,7 @@ def test_nontechnical_notices_do_not_inflate_coverage(tmp_path: Path) -> None:
     window._apply_event(make_event(
         "warning", "SCAN.REPUTATION.UNCONFIGURED", engine="reputation",
     ))
-    assert window.partial_tile.value_label.text() == "0"
+    assert window.partial_tile.number.text() == "0"
     for index in range(3):
         window._apply_event(make_event(
             "skipped", "SCAN.YARA.SIZE_LIMIT", engine="yara",

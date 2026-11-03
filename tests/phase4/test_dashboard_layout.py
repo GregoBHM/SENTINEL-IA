@@ -46,7 +46,7 @@ def test_sidebar_labels_fit_and_scan_is_scrollable(
         child for child in sidebar.findChildren(QLabel)
         if child.text() in {
             "CENTRO DE ANÁLISIS",
-            "ESTADO DEL EQUIPO",
+            "ESTADO",
             "MITIGACIÓN MANUAL",
         }
     ]

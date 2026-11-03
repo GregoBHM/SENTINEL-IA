@@ -50,6 +50,16 @@ Observar el coste real de cada motor en Windows antes de cambiar algoritmos de d
 7. El workflow Windows comprueba pruebas unitarias, Qt, empaquetado one-file, logo, UAC y `db/schema.sql`.
 8. Probar primero en VM, sin activar mitigación experimental en un equipo comprometido.
 
+## Benchmark sintético reproducible
+
+Puedes ejecutar una línea base local, sin archivos maliciosos ni red:
+
+```powershell
+python -m tools.benchmark_scanner --files 150 --workers 3
+```
+
+El comando crea archivos inofensivos en una carpeta temporal y devuelve un resumen JSON con tasa de archivos/segundo y duraciones del motor Hash. No mide precisión antivirus ni el escaneo de todo Windows. Ejecutarlo en Windows permite establecer una referencia antes de optimizar YARA, PE y la concurrencia.
+
 ## Próximos benchmarks propuestos
 - 1.000 archivos benignos de tamaños mixtos (sin muestras malware real).
 - Archivos PE sintéticos y comprimidos inofensivos con límites aplicables.

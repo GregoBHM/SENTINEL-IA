@@ -206,6 +206,7 @@ class OneGuardWindow(QMainWindow):
         self.scan_clock = ScanClock()
         self._last_clock_refresh = 0.0
         self._latest_performance: dict | None = None
+        self._engine_inventory: dict[str, dict[str, str]] = {}
         self._phase_started_at = monotonic()
         self._phase_finished_at: float | None = None
         self.session_id: str | None = None
@@ -412,10 +413,12 @@ class OneGuardWindow(QMainWindow):
         self.pending_label = label("Objetivos pendientes · sin inventario completo", "SmallHelp")
         work_layout.addWidget(self.resources_label)
         work_layout.addWidget(self.pending_label)
-        self.engine_perf_button = QPushButton("Rendimiento por motor")
+        self.engine_perf_button = QPushButton("Estado y rendimiento de motores")
         self.engine_perf_button.setEnabled(False)
         self.engine_perf_button.clicked.connect(self.show_engine_performance)
         work_layout.addWidget(self.engine_perf_button)
+        self.engine_status_label = label("Motores · preparando inventario", "SmallHelp")
+        work_layout.addWidget(self.engine_status_label)
         self.phase_time_label = label("Fase en curso  00:00")
         work_layout.addWidget(self.phase_time_label)
         self.global_label = label("Progreso global · aún no disponible")
@@ -750,7 +753,9 @@ class OneGuardWindow(QMainWindow):
         self.global_label.setText("Descubriendo objetivos · tiempo restante no estimable")
         self.scan_clock.reset()
         self._latest_performance = None
+        self._engine_inventory.clear()
         self.engine_perf_button.setEnabled(False)
+        self.engine_status_label.setText("Motores · preparando inventario")
         self.eta_label.setText("Tiempo restante · recopilando mediciones")
         self.resources_label.setText("Recursos · recopilando datos")
         self.pending_label.setText("Objetivos pendientes · sin inventario completo")
@@ -862,7 +867,7 @@ class OneGuardWindow(QMainWindow):
         """Display observed rates and an explicitly scoped time estimate."""
         self._latest_performance = data
         engines = data.get("engines") or {}
-        self.engine_perf_button.setEnabled(bool(engines))
+        self.engine_perf_button.setEnabled(bool(engines) or bool(self._engine_inventory))
         resources = data.get("process_resources") or {}
         if resources:
             cpu = float(resources.get("cpu_percent", 0.0))
@@ -905,48 +910,105 @@ class OneGuardWindow(QMainWindow):
                     f"Tiempo restante orientativo: {low}–{high}"
                 )
 
+    def _render_engine_inventory(self, rows: list[dict]) -> None:
+        """Show which engines were prepared, unavailable or not requested."""
+        self._engine_inventory = {
+            str(row["id"]): dict(row)
+            for row in rows
+            if isinstance(row, dict) and row.get("id")
+        }
+        prepared = sum(
+            row.get("state") == "prepared"
+            for row in self._engine_inventory.values()
+        )
+        partial = sum(
+            row.get("state") in ("partial", "unavailable")
+            for row in self._engine_inventory.values()
+        )
+        self.engine_status_label.setText(
+            f"Motores · {prepared} preparados · {partial} limitados/no disponibles"
+        )
+        self.engine_perf_button.setEnabled(bool(self._engine_inventory))
+
     def show_engine_performance(self) -> None:
-        """Show observed engine measurements for the current session."""
+        """Open the current session inventory alongside observed measurements."""
         self._open_engine_metrics(
-            (self._latest_performance or {}).get("engines") or {}
+            (self._latest_performance or {}).get("engines") or {},
+            self._engine_inventory,
         )
 
-    def _open_engine_metrics(self, engines: dict) -> None:
-        """Present cumulative measurements without confusing concurrency with wall time."""
+    def _open_engine_metrics(
+        self, engines: dict, inventory: dict[str, dict[str, str]] | None = None,
+    ) -> None:
+        """Display engine state and actual invocations without claiming full coverage."""
+        inventory = inventory or {}
+        names = list(dict.fromkeys([*inventory.keys(), *engines.keys()]))
         dialog = QDialog(self)
-        dialog.setWindowTitle("Rendimiento observado por motor")
-        dialog.resize(760, 460)
+        dialog.setWindowTitle("Motores · estado y rendimiento")
+        dialog.resize(1100, 560)
         layout = QVBoxLayout(dialog)
         layout.addWidget(label(
-            "Duraciones acumuladas de invocaciones por motor. "
-            "Pueden ejecutarse en paralelo; no son el tiempo total. "
-            "Los bytes son tamaños de entrada, no lectura física."
+            "Preparado no significa cobertura completa. Las invocaciones "
+            "finalizadas pueden corresponder a objetivos no aplicables; "
+            "las señales emitidas no son infecciones confirmadas."
         ))
-        details = QPlainTextEdit()
-        details.setReadOnly(True)
-        rows = []
-        for name, item in sorted(
-            engines.items(),
-            key=lambda value: -float(value[1].get("duration_seconds", 0)),
-        ):
-            checks = int(item.get("checks", 0))
-            elapsed = float(item.get("duration_seconds", 0))
-            mean_ms = 1000 * elapsed / checks if checks else 0
-            mb = int(item.get("input_size_bytes", 0)) / (1024 * 1024)
-            rows.append(
-                f"{name} · {checks} comprobaciones · {elapsed:.2f} s acumulados "
-                f"· {mean_ms:.1f} ms/comprobación\n"
-                f"  Completadas: {item.get('completed', 0)} · "
-                f"Omitidas: {item.get('skipped', 0)} · "
-                f"Errores: {item.get('errors', 0)} · "
-                f"Entrada: {mb:.1f} MiB"
+        table = QTableWidget(len(names), 8)
+        table.setHorizontalHeaderLabels([
+            "Motor", "Estado", "Invocaciones", "Finalizadas", "Omitidas",
+            "Errores", "Señales", "Tiempo acumulado",
+        ])
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
+        table.horizontalHeader().setStretchLastSection(True)
+        states = {
+            "prepared": "Preparado",
+            "partial": "Inventario parcial",
+            "unavailable": "No disponible",
+            "not_requested": "No solicitado",
+        }
+        for row_idx, name in enumerate(names):
+            info = inventory.get(name, {})
+            metrics = engines.get(name, {})
+            checks = int(metrics.get("checks", 0))
+            errors = int(metrics.get("errors", 0))
+            skipped = int(metrics.get("skipped", 0))
+            state = states.get(info.get("state", ""), "Sin inventario")
+            if info.get("state") == "prepared" and checks > 0:
+                state = "Con errores" if errors else (
+                    "Con omisiones" if skipped else "Invocado"
+                )
+            title = str(info.get("title") or name)
+            values = (
+                title, state, str(checks) if checks else "—",
+                str(int(metrics.get("completed", 0))) if checks else "—",
+                str(skipped) if checks else "—",
+                str(errors) if checks else "—",
+                str(int(metrics.get("signals", 0))) if checks else "—",
+                f"{float(metrics.get('duration_seconds', 0)):.2f} s"
+                if checks else "—",
             )
-        details.setPlainText("\n\n".join(rows) if rows else
-                             "Todavía no hay mediciones de motores.")
-        layout.addWidget(details)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+            for col_idx, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setToolTip(
+                    str(info.get("note") or "Invocaciones medidas; sin inventario.")
+                )
+                table.setItem(row_idx, col_idx, cell)
+        layout.addWidget(table)
+        layout.addWidget(label(
+            "Consulta «Ver omisiones» en la pantalla de análisis para conocer "
+            "los archivos afectados y sus motivos. Los tiempos acumulados de "
+            "motores paralelos no equivalen al tiempo total de la sesión."
+        ))
+        controls = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        controls.rejected.connect(dialog.reject)
+        layout.addWidget(controls)
         dialog.exec()
 
     def _record_coverage(self, event: ScanEvent) -> None:
@@ -1048,6 +1110,8 @@ class OneGuardWindow(QMainWindow):
                 self.failure_hint.setText(explain_scan_error(message))
                 self.failure_hint.setVisible(True)
             self._log("ERROR", message)
+        elif kind == "engine_inventory":
+            self._render_engine_inventory(payload.get("engines") or [])
         elif kind == "performance":
             self._render_performance(payload)
         elif kind == "progress":
@@ -1335,7 +1399,7 @@ class OneGuardWindow(QMainWindow):
             return
         self._open_engine_metrics({
             str(item["engine"]): item for item in metrics
-        })
+        }, {})
 
     def open_historical_scan(self, index: QModelIndex) -> None:
         """Inspect one previous session without re-running any detection."""

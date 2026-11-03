@@ -15,6 +15,7 @@ from core.aggregator import FindingAggregator
 from core.detection_engine import DetectionEngine
 from core.errors import ScanSkipped
 from core.event_bus import EventBus
+from core.events import make_event
 from core.models import AggregatedFinding, Finding, ScanEvent, ScanStatus, ScanSummary, ScanTarget
 from core.quarantine import quarantine_directory
 from db.database import SQLiteStore
@@ -32,6 +33,7 @@ class TargetOutcome:
     signals: list[Finding] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skips: list[str] = field(default_factory=list)
+    skip_details: list[dict] = field(default_factory=list)
     succeeded: int = 0
     sha256: str | None = None
 
@@ -130,6 +132,11 @@ class ScannerManager:
                 outcome.succeeded += 1
             except ScanSkipped as exc:
                 outcome.skips.append(f"{engine.name}: {exc}")
+                outcome.skip_details.append({
+                    "engine": engine.name,
+                    "code": exc.code,
+                    "params": exc.params,
+                })
             except Exception as exc:
                 # Engines are independent; a failure in one must not skip others.
                 message = f"{engine.name}: {type(exc).__name__}: {exc}"
@@ -257,10 +264,17 @@ class ScannerManager:
                 self.event_bus.publish(ScanEvent("error", {
                     "path": str(outcome.path), "message": error,
                 }))
-            for skipped in outcome.skips:
-                self.event_bus.publish(ScanEvent("skipped", {
-                    "path": str(outcome.path), "message": skipped,
-                }))
+            for index, skipped in enumerate(outcome.skips):
+                details = (outcome.skip_details[index]
+                           if index < len(outcome.skip_details) else {})
+                event = make_event(
+                    "skipped", str(details.get("code", "SCAN.ENGINE.SKIPPED")),
+                    engine=str(details.get("engine", "")),
+                    path=str(outcome.path),
+                    params=details.get("params"),
+                    message=skipped,
+                )
+                self.event_bus.publish(event)
             allowlist = (
                 {outcome.sha256} if outcome.sha256 and self.store.is_whitelisted(outcome.sha256)
                 else set()

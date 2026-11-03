@@ -35,6 +35,25 @@ El workflow ejecuta tests, prueba de inicio Qt, empaqueta recursos SQLite / YARA
 
 **Aviso:** no descargues ni ejecutes la versión antigua si produce `_MEI.../db/schema.sql` no encontrado; ese error significa que el EXE no incluye el esquema. Utiliza una ejecución nueva de `main` cuyo workflow termine correctamente. Antes de analizar una PC comprometida, prueba en una VM con snapshot y evita la mitigación experimental en dispositivos reales.
 
+## Método C: GitHub Releases por versión (recomendado para descargas)
+
+El workflow `.github/workflows/release-windows.yml` publica una **pre-release versionada**
+con un tag inmutable por convención (no se reemplaza una versión ya publicada).
+
+1. Edita `RELEASE_VERSION.txt` y escribe una nueva versión, por ejemplo `v0.6.0-beta.2`.
+2. Haz commit y push a `main`. El workflow `Publish versioned Windows prerelease` se inicia automáticamente.
+3. En `Actions`, verifica que las pruebas, los recursos integrados y la compilación de Windows terminen correctamente.
+4. En `https://github.com/GregoBHM/SENTINEL-IA/releases`, abre la versión y descarga directamente
+   `SentinelOneGuard.exe` y `SentinelOneGuard.sha256.txt`.
+5. Las publicaciones son **pre-releases** deliberadamente, porque la mitigación sigue siendo experimental.
+
+Alternativamente, ejecuta manualmente `Publish versioned Windows prerelease` en Actions desde
+la rama `main`, indicando un tag nuevo con el mismo formato. También puedes crear y publicar
+un tag `vX.Y.Z-beta.N` desde Git; el workflow construye exactamente ese commit.
+
+No vuelvas a utilizar un tag existente: las versiones publicadas **no se sobrescriben**.
+Las descargas de Releases no dependen de la caducidad de los artefactos de Actions.
+
 ## Validación de seguridad previa a su uso
 
 - Verifica en Windows 10 y Windows 11 que el logo aparece en el EXE, la ventana y la barra de tareas.

@@ -54,8 +54,13 @@ class YaraEngine(DetectionEngine):
         """Find matched YARA rules with bounded time and explainable metadata."""
         if target.kind != "file":
             return []
-        if target.path.stat().st_size > self.max_file_size:
-            raise ScanSkipped("YARA omitido: archivo superior al límite configurado")
+        size_bytes = target.path.stat().st_size
+        if size_bytes > self.max_file_size:
+            raise ScanSkipped(
+                "YARA omitido: archivo superior al límite configurado",
+                code="SCAN.YARA.SIZE_LIMIT",
+                params={"size_bytes": size_bytes, "limit_bytes": self.max_file_size},
+            )
         matches = self._rules.match(filepath=str(target.path), timeout=self.timeout_seconds)
         results: list[Finding] = []
         for match in matches:

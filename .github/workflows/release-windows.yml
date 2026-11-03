@@ -1,0 +1,112 @@
+name: Publish versioned Windows prerelease
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - RELEASE_VERSION.txt
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Pre-release tag (e.g. v0.6.0-beta.2); empty uses RELEASE_VERSION.txt'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: oneguard-release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish-windows-prerelease:
+    runs-on: windows-latest
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate version and release source
+        id: version
+        shell: pwsh
+        env:
+          RELEASE_INPUT: ${{ inputs.version }}
+        run: |
+          if (${{ toJSON(github.event_name) }} -eq 'workflow_dispatch' -and
+              $env:GITHUB_REF -ne 'refs/heads/main') {
+            throw 'Manual releases must run from the main branch.'
+          }
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $version = $env:GITHUB_REF_NAME
+          } elseif (-not [string]::IsNullOrWhiteSpace($env:RELEASE_INPUT)) {
+            $version = $env:RELEASE_INPUT.Trim()
+          } else {
+            $version = (Get-Content -LiteralPath 'RELEASE_VERSION.txt' -Raw).Trim()
+          }
+          if ($version -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$') {
+            throw 'Only explicit experimental version tags like v0.6.0-beta.1 are permitted.'
+          }
+          "tag=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Publishing experimental version $version from commit $env:GITHUB_SHA"
+
+      - name: Refuse to replace an existing release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            throw "Release $env:RELEASE_TAG already exists. Increment the version; releases are never overwritten."
+          }
+
+      - name: Install Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+
+      - name: Test, compile and verify Windows executable
+        shell: pwsh
+        run: .\build_windows.ps1
+
+      - name: Create experimental release notes
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          @'
+          Sentinel OneGuard - Windows 10/11 x64
+          ====================================
+          Estado: BETA EXPERIMENTAL. No es un antivirus de producción.
+          - GUI PySide6, logo, manifiesto UAC; EXE compilado en Windows.
+          - El build valida pruebas, inicio Qt, recursos SQL/YARA, icono y UAC.
+          - Un análisis sin detecciones NO demuestra que el sistema esté limpio.
+          - Mitigación/cuárentena EXPERIMENTAL: probar únicamente en VM con snapshot.
+          - Sin protección en tiempo real, sin firma digital Authenticode y sin certificación de desinfección.
+          - No sustituye Microsoft Defender. Mantener Defender activado.
+          - Consulte el archivo SHA-256 adjunto para comprobar el ejecutable.
+          '@ | Set-Content -LiteralPath 'release-notes.txt' -Encoding utf8
+
+      - name: Publish GitHub Release with EXE and SHA-256
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$env:RELEASE_TAG" "dist/SentinelOneGuard.exe" "dist/SentinelOneGuard.sha256.txt" --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "Sentinel OneGuard $env:RELEASE_TAG (Experimental)" --notes-file "release-notes.txt" --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) {
+            throw 'GitHub Release publication failed. Binary build results remain in job logs.'
+          }
+
+      - name: Display permanent version page
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          Write-Host "Release: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$env:RELEASE_TAG"

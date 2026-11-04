@@ -14,6 +14,7 @@ from uuid import uuid4
 from app.config import ScanConfig
 from core.aggregator import FindingAggregator
 from core.archive_members import ArchiveMemberCoverage
+from core.file_identity import FileIdentity, observe_file_identity
 from core.system_identity import SystemObservation
 from core.detection_engine import DetectionEngine
 from core.errors import ScanSkipped
@@ -44,6 +45,7 @@ class TargetOutcome:
     engine_timings: list[EngineTiming] = field(default_factory=list)
     archive_members: list[ArchiveMemberCoverage] = field(default_factory=list)
     system_observation: SystemObservation | None = None
+    file_identity: FileIdentity | None = None
 
 
 def discover_files(
@@ -192,6 +194,13 @@ class ScannerManager:
                     file_header = handle.read(8)
             except OSError:
                 pass
+        # Record content identity only for plausible PE targets. This separate
+        # observation cannot change detection scores or authorize remediation.
+        if target.kind == "file" and file_header is not None and (
+            file_header.startswith(b"MZ")
+            or target.path.suffix.lower() in {".exe", ".dll", ".sys", ".scr"}
+        ) and not self._cancel.is_set():
+            outcome.file_identity = observe_file_identity(target.path)
         for idx, engine in enumerate(self.engines):
             if self._cancel.is_set():
                 for remaining in self.engines[idx:]:
@@ -408,6 +417,7 @@ class ScannerManager:
                 "; ".join(outcome.errors + outcome.skips) or None,
                 archive_members=outcome.archive_members,
                 system_observation=outcome.system_observation,
+                file_identity=outcome.file_identity,
             )
             # Archive members may be unavailable even when the ArchiveEngine
             # itself returned normally. Emit one grouped coverage notice per

@@ -270,7 +270,7 @@ class ArchiveEngine(DetectionEngine):
                 ))
         if self.yara_engine is not None:
             try:
-                matches = self.yara_engine._rules.match(data=blob, timeout=self.yara_engine.timeout_seconds)
+                matches = self.yara_engine.match_bytes(blob)
                 for match in matches:
                     metadata = dict(match.meta or {})
                     score = 0 if metadata.get("test_only") else min(80, max(0, int(metadata.get("risk_score", 45))))
@@ -279,7 +279,10 @@ class ArchiveEngine(DetectionEngine):
                         reason=str(metadata.get("description", "Regla YARA coincidente dentro de archivo comprimido")),
                         risk_score=score, confidence=50, severity=severity_from_score(score),
                         rule_id=str(match.rule), evidence_group=str(match.rule),
-                        details={"contained_in_archive": True},
+                        details={
+                            "contained_in_archive": True,
+                            "backend": getattr(self.yara_engine, "backend", "classic"),
+                        },
                     ))
             except Exception:
                 findings.append(self._report(label, "yara_incomplete", "No se pudo completar YARA del archivo interno"))

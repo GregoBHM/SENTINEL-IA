@@ -90,7 +90,14 @@ class YaraXEngine(DetectionEngine):
                     "limit_bytes": self.max_file_size,
                 },
             )
-        return normalized_yarax(self._scanner().scan(data))
+        try:
+            return normalized_yarax(self._scanner().scan(data))
+        except yara_x.TimeoutError as exc:
+            raise ScanSkipped(
+                "YARA-X agotó el tiempo máximo en contenido interno",
+                code="SCAN.YARA.TIMEOUT",
+                params={"timeout_seconds": self.timeout_seconds},
+            ) from exc
 
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Inspect one file without executing it or making network requests."""
@@ -103,7 +110,14 @@ class YaraXEngine(DetectionEngine):
                 code="SCAN.YARA.SIZE_LIMIT",
                 params={"size_bytes": size, "limit_bytes": self.max_file_size},
             )
-        matches = normalized_yarax(self._scanner().scan_file(str(target.path)))
+        try:
+            matches = normalized_yarax(self._scanner().scan_file(str(target.path)))
+        except yara_x.TimeoutError as exc:
+            raise ScanSkipped(
+                "YARA-X agotó el tiempo máximo de análisis",
+                code="SCAN.YARA.TIMEOUT",
+                params={"timeout_seconds": self.timeout_seconds},
+            ) from exc
         output: list[Finding] = []
         for rule in matches:
             meta = rule.meta

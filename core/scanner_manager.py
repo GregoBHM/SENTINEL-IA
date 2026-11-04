@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from app.config import ScanConfig
 from core.aggregator import FindingAggregator
+from core.archive_members import ArchiveMemberCoverage
 from core.detection_engine import DetectionEngine
 from core.errors import ScanSkipped
 from core.event_bus import EventBus
@@ -40,6 +41,7 @@ class TargetOutcome:
     sha256: str | None = None
     input_size_bytes: int = 0
     engine_timings: list[EngineTiming] = field(default_factory=list)
+    archive_members: list[ArchiveMemberCoverage] = field(default_factory=list)
 
 
 def discover_files(
@@ -206,7 +208,12 @@ class ScannerManager:
                     state = "not_applicable"
                     reason = "El tipo de objetivo no corresponde a este motor"
                     continue
-                signals = engine.scan(target)
+                detailed_scan = getattr(engine, "scan_with_coverage", None)
+                if callable(detailed_scan):
+                    signals, members = detailed_scan(target)
+                    outcome.archive_members.extend(members)
+                else:
+                    signals = engine.scan(target)
                 outcome.signals.extend(signals)
                 signal_count = len(signals)
                 outcome.succeeded += 1
@@ -361,6 +368,8 @@ class ScannerManager:
             status = "scanned"
             if outcome.errors or outcome.skips or any(
                 item.details.get("limitation") for item in outcome.signals
+            ) or any(
+                member.status != "inspected" for member in outcome.archive_members
             ):
                 status = "partial" if outcome.succeeded else "error"
             if not outcome.succeeded and all(
@@ -372,6 +381,7 @@ class ScannerManager:
                 summary.session_id, outcome.path, status,
                 outcome.engine_timings, outcome.sha256,
                 "; ".join(outcome.errors + outcome.skips) or None,
+                archive_members=outcome.archive_members,
             )
             if outcome.kind == "file":
                 summary.scanned_files += 1

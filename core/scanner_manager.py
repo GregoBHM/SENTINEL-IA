@@ -427,9 +427,16 @@ class ScannerManager:
                 else set()
             )
             # Archive members have independent content hashes, never the ZIP's hash.
+            # Resource/cipher/decoder limitations describe coverage, not
+            # malware. ArchiveEngine keeps these as informational Finding
+            # objects for its legacy API, but they must never inflate threats.
+            verdict_signals = [
+                signal for signal in outcome.signals
+                if not signal.details.get("limitation")
+            ]
             verdicts = []
-            for member_target in sorted({signal.target for signal in outcome.signals}):
-                member_evidence = [signal for signal in outcome.signals
+            for member_target in sorted({signal.target for signal in verdict_signals}):
+                member_evidence = [signal for signal in verdict_signals
                                    if signal.target == member_target]
                 member_hash = next((s.sha256 for s in member_evidence if s.sha256), None)
                 member_allowlist = (

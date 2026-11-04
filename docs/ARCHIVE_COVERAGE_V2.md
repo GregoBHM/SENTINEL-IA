@@ -22,7 +22,7 @@ Esto no cubre todos los formatos ni todos los archivos autoextraíbles (por ejem
 
 Cada registro conserva el nombre interno, formato, profundidad, bytes realmente extraídos a memoria, comprobaciones intentadas y razón. La tabla SQLite `scan_archive_members` guarda resultados solo en el equipo, por sesión y contenedor. No se realiza sincronización Cloud. La escritura comparte transacción con el estado de motores por objetivo. La interfaz **Por archivo → Ver contenido comprimido** permite consultar hasta 500 registros de una sesión existente o del historial.
 
-Las limitaciones de archivo interno continúan visibles como incidencias, pero no cuentan como detecciones de malware en el agregador. Un registro de cobertura tampoco modifica la política de mitigación.
+Las limitaciones de archivo interno continúan visibles como incidencias, pero no cuentan como detecciones de malware en el agregador. El escáner emite **un aviso agrupado por contenedor** (`SCAN.ARCHIVE.PARTIAL`) con recuentos de miembros no inspeccionados y parciales; el contador «Cobertura parcial» cuenta el contenedor afectado una vez, no una amenaza por miembro. Los motivos y nombres internos siguen disponibles en SQLite y «Ver contenido comprimido». Un registro de cobertura no modifica la política de mitigación.
 
 ## Casos especiales
 

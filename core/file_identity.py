@@ -24,6 +24,14 @@ class FileIdentity:
     reason: str = ""
 
 
+def _is_windows_reparse_point(value: os.stat_result) -> bool:
+    """Avoid hashing through known Windows reparse points, including junctions.
+
+    stat metadata alone cannot defeat hostile concurrent reparse substitutions.
+    """
+    return bool(getattr(value, "st_file_attributes", 0) & 0x400)
+
+
 def _same_file(a: os.stat_result, b: os.stat_result) -> bool:
     """Reject changes to identity, size or timestamps while reading."""
     return (a.st_dev, a.st_ino, a.st_size, a.st_mtime_ns, a.st_ctime_ns) == (
@@ -59,8 +67,8 @@ def observe_file_identity(
         # Refuse path-level symbolic links and other reparse-like cases when
         # detected. A racing replacement is still addressed by fstat/path stat.
         initial = os.lstat(path)
-        if stat.S_ISLNK(initial.st_mode):
-            return result("unsupported", "Symbolic link; no content identity")
+        if stat.S_ISLNK(initial.st_mode) or _is_windows_reparse_point(initial):
+            return result("unsupported", "Symlink or reparse point; no content identity")
         if not stat.S_ISREG(initial.st_mode):
             return result("unsupported", "Not a regular file")
         if initial.st_size > max_bytes:
@@ -71,7 +79,8 @@ def observe_file_identity(
         fd = os.open(path, flags)
         try:
             before = os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode) or not _same_file(initial, before):
+            if (_is_windows_reparse_point(before) or not stat.S_ISREG(before.st_mode)
+                    or not _same_file(initial, before)):
                 return result("changed", "File changed between path check and open")
             hasher = hashlib.sha256()
             count = 0
@@ -90,7 +99,8 @@ def observe_file_identity(
                 count += len(data)
                 hasher.update(data)
             after = os.fstat(fd)
-            if not _same_file(before, after) or count != after.st_size:
+            if (_is_windows_reparse_point(after) or not _same_file(before, after)
+                    or count != after.st_size):
                 return result("changed", "File metadata or length changed during read",
                               read=count, size=after.st_size)
             # A path could now point to a different file despite an open fd.
@@ -98,7 +108,7 @@ def observe_file_identity(
                 current = os.lstat(path)
             except OSError:
                 return result("changed", "Path disappeared during read", read=count, size=after.st_size)
-            if not _same_file(after, current):
+            if _is_windows_reparse_point(current) or not _same_file(after, current):
                 return result("changed", "Path identity changed during read",
                               read=count, size=after.st_size)
             if time.monotonic() - started >= max_seconds:

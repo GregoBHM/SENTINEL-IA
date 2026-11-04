@@ -14,6 +14,7 @@ from core.models import AggregatedFinding, FileHashes, ScanSummary
 from core.performance import EngineTiming
 from core.archive_members import ArchiveMemberCoverage
 from core.system_identity import SystemObservation
+from core.file_identity import FileIdentity
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -146,6 +147,7 @@ class SQLiteStore:
         error: str | None = None,
         archive_members: list[ArchiveMemberCoverage] | None = None,
         system_observation: SystemObservation | None = None,
+        file_identity: FileIdentity | None = None,
     ) -> None:
         """Persist target, motors and archive members in one local transaction.
 
@@ -186,6 +188,19 @@ class SQLiteStore:
                     ],
                 )
 
+            if file_identity is not None:
+                identity = file_identity
+                conn.execute(
+                    """INSERT OR REPLACE INTO scan_file_identities
+                       (session_id,target_path,status,sha256,file_size,bytes_read,
+                        elapsed_seconds,reason,observed_at)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (session_id, str(path), identity.status, identity.sha256[:64],
+                     identity.file_size, max(0, identity.bytes_read),
+                     max(0.0, identity.elapsed_seconds), identity.reason[:500],
+                     utc_now()),
+                )
+
             if system_observation is not None:
                 row = system_observation
                 conn.execute(
@@ -200,6 +215,20 @@ class SQLiteStore:
                      row.source_type[:40], row.command_sha256[:64],
                      row.note[:500], utc_now()),
                 )
+
+    def get_file_identities(
+        self, session_id: str, *, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Read bounded, session-specific content observations."""
+        maximum = max(1, min(int(limit), 2000))
+        with self.connection() as conn:
+            return [dict(row) for row in conn.execute(
+                """SELECT target_path,status,sha256,file_size,bytes_read,
+                          elapsed_seconds,reason,observed_at
+                   FROM scan_file_identities WHERE session_id=?
+                   ORDER BY target_path LIMIT ?""",
+                (session_id, maximum),
+            ).fetchall()]
 
     def get_system_observations(
         self, session_id: str, *, limit: int = 500

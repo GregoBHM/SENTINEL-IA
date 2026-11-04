@@ -213,3 +213,21 @@ CREATE TABLE IF NOT EXISTS scan_system_observations (
 );
 CREATE INDEX IF NOT EXISTS ix_system_observations_correlation
     ON scan_system_observations(session_id, normalized_executable, kind, status);
+
+
+-- Phase 3D.3: local bounded content identity evidence, not a malware verdict.
+CREATE TABLE IF NOT EXISTS scan_file_identities (
+    session_id TEXT NOT NULL REFERENCES scan_sessions(id),
+    target_path TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN
+        ('observed','limited','changed','unsupported','unavailable')),
+    sha256 TEXT NOT NULL DEFAULT '',
+    file_size INTEGER,
+    bytes_read INTEGER NOT NULL DEFAULT 0,
+    elapsed_seconds REAL NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY(session_id, target_path)
+);
+CREATE INDEX IF NOT EXISTS ix_file_identity_session_status
+    ON scan_file_identities(session_id, status);

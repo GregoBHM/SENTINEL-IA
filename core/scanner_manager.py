@@ -201,6 +201,19 @@ class ScannerManager:
             or target.path.suffix.lower() in {".exe", ".dll", ".sys", ".scr"}
         ) and not self._cancel.is_set():
             outcome.file_identity = observe_file_identity(target.path)
+            if outcome.file_identity.status != "observed":
+                # Report a coverage limit, never a new detection signal.
+                description = (
+                    "file_identity: "
+                    + outcome.file_identity.status + ": "
+                    + outcome.file_identity.reason
+                )
+                outcome.skips.append(description)
+                outcome.skip_details.append({
+                    "engine": "file_identity",
+                    "code": "SCAN.ENGINE.SKIPPED",
+                    "params": {"reason": outcome.file_identity.status},
+                })
         for idx, engine in enumerate(self.engines):
             if self._cancel.is_set():
                 for remaining in self.engines[idx:]:

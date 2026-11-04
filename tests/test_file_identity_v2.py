@@ -75,3 +75,27 @@ def test_changed_file_is_not_reported_as_observed(tmp_path: Path, monkeypatch):
     result = observe_file_identity(path, chunk_size=4096)
     assert result.status == "changed"
     assert not result.sha256
+
+
+def test_windows_reparse_attribute_is_rejected(tmp_path: Path, monkeypatch):
+    import core.file_identity as identity
+
+    path = tmp_path / "safe.exe"
+    path.write_bytes(b"MZharmless")
+    real_lstat = identity.os.lstat
+
+    class FakeReparseStat:
+        def __init__(self, original):
+            self._original = original
+            self.st_file_attributes = 0x400
+
+        def __getattr__(self, name):
+            return getattr(self._original, name)
+
+    monkeypatch.setattr(
+        identity.os, "lstat",
+        lambda candidate: FakeReparseStat(real_lstat(candidate)),
+    )
+    result = identity.observe_file_identity(path)
+    assert result.status == "unsupported"
+    assert not result.sha256

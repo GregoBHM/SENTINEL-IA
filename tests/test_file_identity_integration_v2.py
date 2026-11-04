@@ -56,3 +56,30 @@ def test_database_isolation_and_local_evidence(tmp_path: Path):
     assert store.get_file_identities("one")[0]["status"] == "limited"
     trace = read_evidence_trace(store, "one")
     assert any(item.kind == "identity_limit" for item in trace.relations)
+
+
+def test_limited_identity_is_coverage_not_detection(tmp_path: Path, monkeypatch):
+    from core.file_identity import FileIdentity
+    import core.scanner_manager as scanner
+
+    sample = tmp_path / "fixture.exe"
+    sample.write_bytes(b"MZ" + b"harmless")
+    store = SQLiteStore(tmp_path / "scan.db")
+    monkeypatch.setattr(
+        scanner, "observe_file_identity",
+        lambda path: FileIdentity(str(path), "limited", reason="Synthetic limit"),
+    )
+    result = ScannerManager(
+        ScanConfig(database_path=store.path, max_workers=1, max_pending=2),
+        store, [HashEngine(store)],
+    ).run([sample])
+    assert result.status == ScanStatus.COMPLETED
+    assert result.omitted_checks >= 1
+    assert result.finding_files == 0
+    assert store.get_file_identities(result.session_id)[0]["status"] == "limited"
+    with store.connection() as conn:
+        row = conn.execute(
+            "SELECT status FROM scan_targets WHERE session_id=? AND target_path=?",
+            (result.session_id, str(sample.absolute())),
+        ).fetchone()
+        assert row["status"] == "partial"

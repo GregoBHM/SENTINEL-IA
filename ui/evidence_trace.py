@@ -17,6 +17,8 @@ _CATEGORIES = {
     "coverage": "Cobertura parcial",
     "context": "Ruta declarada",
     "hash": "Hash idéntico",
+    "system_link": "Proceso e inicio",
+    "identity_limit": "Identidad incompleta",
 }
 
 
@@ -66,6 +68,8 @@ class EvidenceTraceDialog(QDialog):
         note = QLabel(
             "Cada vínculo se deriva de datos guardados por los motores. "
             "Rutas similares, contenido idéntico o un hallazgo no prueban infección. "
+            "Las relaciones entre procesos e inicios se apoyan en PID, hora de "
+            "creación y ruta de ejecutable, pero no demuestran qué inició el proceso. "
             "Las omisiones y objetos no inspeccionados siguen siendo relevantes."
         )
         note.setWordWrap(True)

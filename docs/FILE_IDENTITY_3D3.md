@@ -37,3 +37,19 @@ firmas, mitigación ni interfaz. Esta fase no está completa.
 4. Asociar observaciones con el PID+create_time solo con procedencia y sin
    afirmar identidad de la imagen mapeada.
 5. Integrar firma Authenticode y vista UI después de pruebas nativas.
+
+## Incremento 2 — Integración inicial
+- `ScannerManager` observa el contenido únicamente para candidatos PE (cabecera
+  MZ o extensiones .exe/.dll/.sys/.scr), sin alterar los resultados de motores.
+- `scan_file_identities` persiste estado y SHA-256 en la misma transacción
+  que la cobertura del objetivo; lectura por sesión mediante
+  `SQLiteStore.get_file_identities`.
+- `read_evidence_trace` expone las identidades observadas y sus limitaciones.
+  Ninguna relación nueva atribuye causalidad ni que un proceso haya ejecutado
+  los bytes leídos del archivo.
+- Pruebas sintéticas de persistencia, trazabilidad y aislamiento de sesiones.
+
+**Pendiente:** validación de CI, endurecimiento de puntos de reanálisis Win32,
+presupuesto global de I/O, eliminación de lectura duplicada con HashEngine,
+correlación explícita con PID+create_time, UI dedicada y Authenticode.
+Un estado `observed` no implica que el archivo sea benigno.

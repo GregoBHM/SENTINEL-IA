@@ -101,7 +101,7 @@ def observe_process_identity(target: ScanTarget, process_api: object) -> SystemO
     try:
         process = process_api.Process(pid)
         actual = float(process.create_time())
-        if not math.isfinite(actual) or abs(actual - started) > 0.5:
+        if not math.isfinite(actual) or abs(actual - started) > 0.01:
             return SystemObservation(
                 **base, status="stale", pid=pid, create_time=started,
                 note="PID reutilizado o identidad modificada durante el análisis",

@@ -161,7 +161,7 @@ def test_malformed_renamed_pe_does_not_claim_completed_inspection(
 ) -> None:
     """An MZ header with no valid PE directory is a skip, never a clean result."""
     file = tmp_path / "disguised.dat"
-    file.write_bytes(b"MZ" + b"\\x00" * 28)
+    file.write_bytes(b"MZ" + bytes(28))
     store = SQLiteStore(tmp_path / "malformed.db")
     summary = ScannerManager(
         ScanConfig(database_path=store.path, max_workers=1, max_pending=1),

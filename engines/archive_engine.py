@@ -70,6 +70,14 @@ class ArchiveEngine(DetectionEngine):
                 0 < max_member_bytes <= max_total_bytes and max_seconds > 0):
             raise ValueError("Parámetros de archivo comprimido inválidos")
 
+    def applies_to(self, target: ScanTarget, file_header: bytes | None = None) -> bool:
+        """Supported archive types are routed by extension.
+
+        Renamed archive formats need explicit decoder routing before they can
+        be claimed as inspected; no false coverage for these objects.
+        """
+        return target.kind == "file" and target.path.suffix.lower() in _ARCHIVES
+
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Read a supported container while tracking a shared resource budget."""
         if target.kind != "file" or target.path.suffix.lower() not in _ARCHIVES:

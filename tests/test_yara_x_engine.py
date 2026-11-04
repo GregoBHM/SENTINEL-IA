@@ -104,3 +104,33 @@ def test_classic_scans_bounded_zip_members(tmp_path: Path) -> None:
     yara_hits = [f for f in findings if f.engine == "yara"]
     assert len(yara_hits) == 1
     assert yara_hits[0].details["backend"] == "classic"
+
+
+def test_missing_yarax_never_falls_back_without_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing optional native module is an explicit availability failure."""
+    from engines import yara_x_engine
+
+    monkeypatch.setattr(yara_x_engine, "yara_x", None)
+    with pytest.raises(RuleLoadError, match="no está instalado"):
+        yara_x_engine.YaraXEngine(_bundle())
+
+
+def test_yarax_timeout_is_coverage_omission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Timeouts are incomplete analysis, not a claimed clean scan or malware."""
+    module = pytest.importorskip("yara_x")
+    engine = YaraXEngine(_bundle())
+    class FakeTimeoutScanner:
+        def scan_file(self, path: str):
+            raise module.TimeoutError("timeout in synthetic test")
+
+    monkeypatch.setattr(engine, "_scanner", lambda: FakeTimeoutScanner())
+    sample = tmp_path / "safe.bin"
+    sample.write_bytes(b"harmless content")
+    with pytest.raises(ScanSkipped) as caught:
+        engine.scan(ScanTarget(sample))
+    assert caught.value.code == "SCAN.YARA.TIMEOUT"
+    assert caught.value.params["timeout_seconds"] == engine.timeout_seconds

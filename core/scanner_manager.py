@@ -178,19 +178,41 @@ class ScannerManager:
             except OSError:
                 # Engines will record the access failure themselves.
                 pass
-        for engine in self.engines:
+        # Read the small magic prefix only once for eligibility checks.
+        # A failed read is not interpreted as "no malware": actual engines
+        # still receive the target and record access errors as appropriate.
+        file_header: bytes | None = None
+        if target.kind == "file":
+            try:
+                with target.path.open("rb") as handle:
+                    file_header = handle.read(8)
+            except OSError:
+                pass
+        for idx, engine in enumerate(self.engines):
             if self._cancel.is_set():
+                for remaining in self.engines[idx:]:
+                    outcome.engine_timings.append(EngineTiming(
+                        engine=remaining.name, status="not_run",
+                        duration_seconds=0.0, input_size_bytes=0,
+                        reason="Análisis cancelado antes de iniciar el motor",
+                    ))
                 break
             started = time.perf_counter()
             state = "success"
             signal_count = 0
+            reason = ""
             try:
+                if not engine.applies_to(target, file_header):
+                    state = "not_applicable"
+                    reason = "El tipo de objetivo no corresponde a este motor"
+                    continue
                 signals = engine.scan(target)
                 outcome.signals.extend(signals)
                 signal_count = len(signals)
                 outcome.succeeded += 1
             except ScanSkipped as exc:
                 state = "skipped"
+                reason = str(exc)
                 outcome.skips.append(f"{engine.name}: {exc}")
                 outcome.skip_details.append({
                     "engine": engine.name,
@@ -198,17 +220,19 @@ class ScannerManager:
                     "params": exc.params,
                 })
             except Exception as exc:
-                # Engines are independent; a failure in one must not skip others.
+                # A broken applicability check is an error, never a clean result.
                 state = "error"
-                message = f"{engine.name}: {type(exc).__name__}: {exc}"
+                reason = f"{type(exc).__name__}: {exc}"
+                message = f"{engine.name}: {reason}"
                 outcome.errors.append(message)
                 LOG.warning("Error del motor %s: %s", engine.name, type(exc).__name__)
             finally:
                 outcome.engine_timings.append(EngineTiming(
                     engine=engine.name, status=state,
                     duration_seconds=max(0.0, time.perf_counter() - started),
-                    input_size_bytes=outcome.input_size_bytes,
-                    signal_count=signal_count,
+                    input_size_bytes=(outcome.input_size_bytes
+                                      if state not in ("not_applicable", "not_run") else 0),
+                    signal_count=signal_count, reason=reason[:500],
                 ))
         # Reuse the hash engine's cache for whitelist decisions on YARA-only matches.
         hasher = next((e for e in self.engines if isinstance(e, HashEngine)), None)
@@ -339,8 +363,14 @@ class ScannerManager:
                 item.details.get("limitation") for item in outcome.signals
             ):
                 status = "partial" if outcome.succeeded else "error"
-            self.store.record_target(
-                summary.session_id, outcome.path, status, outcome.sha256,
+            if not outcome.succeeded and all(
+                item.status in ("not_applicable", "not_run")
+                for item in outcome.engine_timings
+            ):
+                status = "not_applicable" if not self._cancel.is_set() else "partial"
+            self.store.record_target_engine_runs(
+                summary.session_id, outcome.path, status,
+                outcome.engine_timings, outcome.sha256,
                 "; ".join(outcome.errors + outcome.skips) or None,
             )
             if outcome.kind == "file":

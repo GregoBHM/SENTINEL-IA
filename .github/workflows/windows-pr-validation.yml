@@ -2,7 +2,11 @@ name: Windows PR validation
 
 on:
   pull_request:
-    branches: [main]
+    # Validate stacked PRs as well as PRs targeting main.
+  push:
+    # Validate this experimental stacked branch while its dependencies
+    # remain open; main will keep the general pull_request trigger.
+    branches: [feat/v2-process-persistence-identity]
 
 permissions:
   contents: read

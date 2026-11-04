@@ -213,6 +213,32 @@ def read_evidence_trace(
                 "identity_limit",
             )
 
+        # Content identity is evidence of the disk bytes we read, not the
+        # mapped process image or evidence that a file is safe.
+        file_identities = conn.execute(
+            """SELECT target_path,status,sha256,file_size,bytes_read,reason
+               FROM scan_file_identities WHERE session_id=?
+               ORDER BY target_path LIMIT ?""",
+            (session_id, maximum + 1),
+        ).fetchall()
+        truncated |= len(file_identities) > maximum
+        for row in file_identities[:maximum]:
+            if row["status"] == "observed":
+                add(
+                    row["target_path"], "Huella de contenido observada",
+                    str(row["sha256"])[:64],
+                    f"SHA-256 de {row['bytes_read']} bytes leídos en disco; "
+                    "no identifica los bytes cargados en memoria ni confirma seguridad.",
+                    "content_identity",
+                )
+            else:
+                add(
+                    row["target_path"], "Identidad de contenido incompleta",
+                    str(row["status"]),
+                    str(row["reason"])[:300],
+                    "identity_limit",
+                )
+
         # An identical content hash is a demonstrable relation, but never a
         # claim of propagation or related infection. Keep only bounded pairs.
         hashes = conn.execute(

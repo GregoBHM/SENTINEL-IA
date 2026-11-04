@@ -39,6 +39,10 @@ _CATALOG: dict[str, tuple[str, str, str, str | None]] = {
         "coverage", "WARN", "Motor YARA no disponible",
         "Revisar configuración de YARA",
     ),
+    "SCAN.YARA.TIMEOUT": (
+        "coverage", "WARN", "YARA agotó el tiempo de inspección",
+        "Revisar archivos omitidos",
+    ),
     "SCAN.ENGINE.SKIPPED": (
         "coverage", "WARN", "Un motor omitió un objetivo",
         "Ver cobertura",
@@ -69,6 +73,10 @@ _DESCRIPTIONS = {
     "SCAN.YARA.UNAVAILABLE": (
         "No se pudo iniciar YARA. Los demás motores continúan, "
         "pero la cobertura de reglas es parcial."
+    ),
+    "SCAN.YARA.TIMEOUT": (
+        "El motor alcanzó el tiempo máximo antes de completar una comprobación. "
+        "El archivo queda con cobertura parcial; no equivale a infección."
     ),
     "SCAN.ENGINE.SKIPPED": (
         "Un componente no pudo revisar este objetivo. "

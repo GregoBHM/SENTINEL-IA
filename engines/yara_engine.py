@@ -8,6 +8,7 @@ from core.aggregator import severity_from_score
 from core.detection_engine import DetectionEngine
 from core.errors import RuleLoadError, ScanSkipped
 from core.models import Finding, ScanTarget
+from engines.yara_matches import RuleMatch, normalized_classic
 
 try:
     import yara
@@ -54,6 +55,18 @@ class YaraEngine(DetectionEngine):
         """A loaded YARA ruleset may inspect any file type."""
         return target.kind == "file"
 
+    def match_bytes(self, data: bytes) -> list[RuleMatch]:
+        """Use the same match contract for local files and archive contents."""
+        if len(data) > self.max_file_size:
+            raise ScanSkipped(
+                "YARA omitido: archivo interno superior al límite configurado",
+                code="SCAN.YARA.SIZE_LIMIT",
+                params={"size_bytes": len(data), "limit_bytes": self.max_file_size},
+            )
+        return normalized_classic(
+            self._rules.match(data=data, timeout=self.timeout_seconds)
+        )
+
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Find matched YARA rules with bounded time and explainable metadata."""
         if target.kind != "file":
@@ -65,7 +78,9 @@ class YaraEngine(DetectionEngine):
                 code="SCAN.YARA.SIZE_LIMIT",
                 params={"size_bytes": size_bytes, "limit_bytes": self.max_file_size},
             )
-        matches = self._rules.match(filepath=str(target.path), timeout=self.timeout_seconds)
+        matches = normalized_classic(
+            self._rules.match(filepath=str(target.path), timeout=self.timeout_seconds)
+        )
         results: list[Finding] = []
         for match in matches:
             meta: dict[str, Any] = dict(match.meta or {})
@@ -86,6 +101,6 @@ class YaraEngine(DetectionEngine):
                 evidence_group=str(meta.get("evidence_group") or match.rule),
                 mitre_techniques=(tech,) if tech else (),
                 details={"namespace": match.namespace, "tags": list(match.tags),
-                         "test_only": test_only},
+                         "test_only": test_only, "backend": "classic"},
             ))
         return results

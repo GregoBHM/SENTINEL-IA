@@ -21,6 +21,33 @@ jobs:
       - name: Run unit tests, GUI smoke and validate Windows package
         shell: pwsh
         run: .\build_windows.ps1
+      - name: Install optional YARA-X evaluation wheel (not bundled in EXE)
+        if: success()
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m pip install --only-binary=:all: yara-x==1.22.1
+          if ($LASTEXITCODE -ne 0) { throw 'Optional YARA-X evaluation wheel unavailable.' }
+      - name: Validate YARA and YARA-X parity, ZIP and config
+        if: success()
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m pytest -q tests/test_yara_x_engine.py tests/test_yara_backend_benchmark.py
+          if ($LASTEXITCODE -ne 0) { throw 'YARA-X evaluation tests failed.' }
+      - name: Benchmark identical harmless YARA fixtures
+        if: success()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'artifacts/yara-evaluation' -Force | Out-Null
+          .\.venv\Scripts\python.exe -m tools.benchmark_yara_backends --files 24 --rounds 3 | Out-File -FilePath 'artifacts/yara-evaluation/yara-parity.json' -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'YARA vs YARA-X parity disagreed.' }
+          Get-Content 'artifacts/yara-evaluation/yara-parity.json'
+      - name: Upload YARA-X compatibility report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-oneguard-yarax-evaluation
+          path: artifacts/yara-evaluation/yara-parity.json
+          if-no-files-found: error
       - name: Measure synthetic local hash throughput
         if: success()
         shell: pwsh

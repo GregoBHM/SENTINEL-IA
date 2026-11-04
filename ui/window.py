@@ -628,6 +628,9 @@ class OneGuardWindow(QMainWindow):
         timing_button = QPushButton("Ver rendimiento de sesión")
         timing_button.clicked.connect(self.show_historical_performance)
         buttons.addWidget(timing_button)
+        coverage_button = QPushButton("Cobertura por archivo")
+        coverage_button.clicked.connect(self.show_historical_file_coverage)
+        buttons.addWidget(coverage_button)
         buttons.addStretch()
         column.addLayout(buttons)
         column.addWidget(label("Puedes exportar informes HTML/CSV desde Hallazgos tras abrir una sesión."))
@@ -1424,6 +1427,24 @@ class OneGuardWindow(QMainWindow):
         self._open_engine_metrics({
             str(item["engine"]): item for item in metrics
         }, {})
+
+    def show_historical_file_coverage(self) -> None:
+        """Inspect evidence of a selected previous session, without rescanning."""
+        index = self.history_table.currentRow()
+        record = self.history_table.item(index, 6) if index >= 0 else None
+        if record is None:
+            QMessageBox.information(
+                self, "Cobertura", "Selecciona un análisis del historial."
+            )
+            return
+        try:
+            store = SQLiteStore(self.config.database_path)
+        except (sqlite3.Error, OSError):
+            QMessageBox.warning(
+                self, "Cobertura", "No se pudo abrir la base de datos del historial."
+            )
+            return
+        FileCoverageDialog(store, record.text(), self).exec()
 
     def open_historical_scan(self, index: QModelIndex) -> None:
         """Inspect one previous session without re-running any detection."""

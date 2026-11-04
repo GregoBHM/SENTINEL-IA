@@ -125,6 +125,8 @@ class ArchiveEngine(DetectionEngine):
                 blob = handle.read(self.max_total_bytes + 1)
             if len(blob) > self.max_total_bytes:
                 raise ScanSkipped("Contenedor supera límite de memoria")
+            if identify_archive(blob[:8], target.path.name) is None:
+                return []
             return self._scan_blob(blob, target.path.name, str(target.path), 1, budget)
         except (zipfile.BadZipFile, OSError, ValueError, EOFError) as exc:
             raise ScanSkipped(f"Error de lectura de comprimido: {type(exc).__name__}") from exc
@@ -161,8 +163,16 @@ class ArchiveEngine(DetectionEngine):
     ) -> list[Finding]:
         """Walk nested archives; all child labels retain the parent provenance."""
         if depth > self.max_depth:
+            self._record_member(
+                label, "container", "uninspected", depth,
+                reason="Límite de profundidad",
+            )
             return [self._report(label, "depth_limit", "Contenido anidado no analizado: límite de profundidad")]
         if time.monotonic() > budget.deadline:
+            self._record_member(
+                label, "container", "uninspected", depth,
+                reason="Límite de tiempo agotado",
+            )
             return [self._report(label, "time_limit", "Inspección incompleta: límite de tiempo")]
         identity = identify_archive(blob[:8], name)
         if identity is None:
@@ -220,9 +230,13 @@ class ArchiveEngine(DetectionEngine):
             ):
                 performed.append("yara")
             suffix = Path(name).suffix.lower()
-            if suffix in {".ps1", ".psm1", ".js", ".vbs", ".hta", ".bat", ".cmd"}:
+            if suffix in {".ps1", ".psm1", ".js", ".vbs", ".hta", ".bat", ".cmd"} and not any(
+                f.rule_id == "script_incomplete" for f in observed
+            ):
                 performed.append("script_static")
-            if data.startswith(b"MZ"):
+            if data.startswith(b"MZ") and not any(
+                f.rule_id == "pe_dependency" for f in observed
+            ):
                 performed.append("pe_static")
             self._record_member(
                 label, "file", "partial" if missing else "inspected", depth + 1,
@@ -249,9 +263,17 @@ class ArchiveEngine(DetectionEngine):
                     child = label + "::" + entry.filename
                     if entry.flag_bits & 0x1:
                         findings.append(self._report(child, "encrypted", "No se pudo inspeccionar: entrada cifrada"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason="Entrada cifrada",
+                        )
                         continue
                     if entry.file_size > self.max_member_bytes:
                         findings.append(self._report(child, "size_limit", "No inspeccionado: archivo interno demasiado grande"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason="Tamaño interno superior al límite",
+                        )
                         continue
                     if entry.compress_size and entry.file_size / entry.compress_size > 100:
                         findings.append(self._report(child, "expansion_ratio", "Relación de expansión elevada; inspección limitada"))
@@ -260,6 +282,10 @@ class ArchiveEngine(DetectionEngine):
                             findings.extend(self._visit(stream, entry.filename, child, depth, budget))
                     except (OSError, RuntimeError, zipfile.BadZipFile, EOFError, ValueError) as exc:
                         findings.append(self._report(child, "entry_error", f"Entrada no analizada: {type(exc).__name__}"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason=f"No se pudo leer: {type(exc).__name__}",
+                        )
                     if budget.entries > self.max_entries or budget.consumed > self.max_total_bytes:
                         break
         except (OSError, zipfile.BadZipFile, EOFError) as exc:
@@ -286,15 +312,27 @@ class ArchiveEngine(DetectionEngine):
                     child = label + "::" + entry.filename
                     if entry.needs_password():
                         findings.append(self._report(child, "encrypted", "RAR cifrado; contenido no inspeccionado"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason="RAR cifrado",
+                        )
                         continue
                     if entry.file_size > self.max_member_bytes:
                         findings.append(self._report(child, "size_limit", "RAR interno excede límite"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason="Tamaño interno superior al límite",
+                        )
                         continue
                     try:
                         with archive.open(entry) as stream:
                             findings.extend(self._visit(stream, entry.filename, child, depth, budget))
                     except Exception as exc:
                         findings.append(self._report(child, "rar_error", f"Entrada RAR inaccesible: {type(exc).__name__}"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason=f"Error RAR: {type(exc).__name__}",
+                        )
                     if budget.entries > self.max_entries:
                         break
         except Exception as exc:
@@ -312,9 +350,16 @@ class ArchiveEngine(DetectionEngine):
         try:
             with py7zr.SevenZipFile(io.BytesIO(blob), mode="r") as archive:
                 entries = archive.list()
+                visible = entries[:min(self.max_entries, 100)]
                 messages = [self._report(label + "::" + str(x.filename), "seven_zip_pending",
                            "7z: contenido pendiente de inspección en worker aislado")
-                            for x in entries[:min(self.max_entries, 100)]]
+                            for x in visible]
+                for entry in visible:
+                    self._record_member(
+                        label + "::" + str(entry.filename), "unknown",
+                        "uninspected", depth + 1,
+                        reason="7z solo inventariado; contenido no inspeccionado",
+                    )
                 if len(entries) > 100:
                     messages.append(self._report(label, "entry_limit", "7z: inventario truncado"))
                 return messages
@@ -355,8 +400,14 @@ class ArchiveEngine(DetectionEngine):
             except Exception:
                 findings.append(self._report(label, "yara_incomplete", "No se pudo completar YARA del archivo interno"))
         if Path(name).suffix.lower() in {".ps1", ".psm1", ".js", ".vbs", ".hta", ".bat", ".cmd"}:
-            findings.extend(self.script_engine.inspect_bytes(blob, label))
-        if Path(name).suffix.lower() in {".exe", ".dll", ".sys", ".scr"}:
+            if len(blob) > self.script_engine.max_script_bytes:
+                findings.append(self._report(
+                    label, "script_incomplete",
+                    "Script interno no analizado: superior al límite de scripts",
+                ))
+            else:
+                findings.extend(self.script_engine.inspect_bytes(blob, label))
+        if blob.startswith(b"MZ"):
             try:
                 findings.extend(self.pe_engine.inspect_bytes(blob, label))
             except ScanSkipped as exc:

@@ -22,7 +22,7 @@ Los motores que inspeccionan **archivos arbitrarios** incluyen Hash y YARA (si Y
 
 `scan_engine_metrics` añade las columnas `not_applicable` y `not_run` con migración aditiva. El campo `checks` solo cuenta motores *invocados*; `completed` significa finalizado, no «sin amenazas». Las duraciones solapadas de motores concurrentes no representan el tiempo total de pared.
 
-La interfaz ofrece «Por archivo», con rutas recientes limitadas, búsqueda por ruta exacta y resultados. Esto no ejecuta un análisis adicional ni envía información a Internet.
+La interfaz ofrece «Por archivo» durante el análisis y «Cobertura por archivo» en Historial para la sesión seleccionada, con rutas recientes limitadas, búsqueda por ruta exacta y resultados. Ninguna de estas vistas ejecuta un análisis adicional ni envía información a Internet.
 
 ## Límites y decisiones pendientes
 

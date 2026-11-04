@@ -78,6 +78,9 @@ class FileCoverageDialog(QDialog):
         close.rejected.connect(self.reject)
         layout.addWidget(close)
         if paths:
+            # Editable combos with a placeholder may retain currentIndex=-1
+            # after addItems on Windows Qt; explicitly select the first record.
+            self.selector.setCurrentIndex(0)
             self.populate_for_path()
 
     def populate_for_path(self) -> None:

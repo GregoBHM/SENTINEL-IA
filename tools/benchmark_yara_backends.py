@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from importlib.metadata import version
 import statistics
 import tempfile
 import time
@@ -93,8 +94,8 @@ def run_benchmark(
         "rule_files": len(list(rule_directory.rglob("*.yar"))) +
                       len(list(rule_directory.rglob("*.yara"))),
         "backend_versions": {
-            "classic": str(getattr(__import__("yara"), "__version__", "unknown")),
-            "yarax": str(getattr(__import__("yara_x"), "__version__", "unknown")),
+            "classic": version("yara-python"),
+            "yarax": version("yara-x"),
         },
         "compile_seconds": compile_seconds,
         "scan_seconds_median": median_seconds,

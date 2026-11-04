@@ -8,6 +8,7 @@ from core.aggregator import severity_from_score
 from core.detection_engine import DetectionEngine
 from core.heuristics import risky_user_location, system_filename_spoof
 from core.models import Finding, ScanTarget
+from core.system_identity import SystemObservation, observe_process_identity
 from platform_win.authenticode import verify_authenticode
 
 try:
@@ -46,6 +47,19 @@ class ProcessEngine(DetectionEngine):
     def applies_to(self, target: ScanTarget, file_header: bytes | None = None) -> bool:
         """This engine inspects process inventory records, not file paths."""
         return target.kind == "process"
+
+    def scan_with_observation(
+        self, target: ScanTarget
+    ) -> tuple[list[Finding], SystemObservation]:
+        """Collect a PID + birth-time verified snapshot before analysis.
+
+        Stale or inaccessible identities are incomplete coverage, not benign
+        processes, and never become inputs for process/autorun correlation.
+        """
+        observation = observe_process_identity(target, psutil)
+        if observation.status != "verified":
+            return [], observation
+        return self.scan(target), observation
 
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Check PID reuse, path authenticity and low-confidence network indicators."""

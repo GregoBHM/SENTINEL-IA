@@ -59,6 +59,10 @@ class HashEngine(DetectionEngine):
         return (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns,
                 stat.st_ino, stat.st_dev)
 
+    def applies_to(self, target: ScanTarget, file_header: bytes | None = None) -> bool:
+        """Hashes require file content, never a virtual Windows system target."""
+        return target.kind == "file"
+
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Return known local and opt-in external matches for one file."""
         if target.kind != "file":

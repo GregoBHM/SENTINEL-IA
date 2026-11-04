@@ -43,6 +43,10 @@ class ProcessEngine(DetectionEngine):
                 continue
         return result
 
+    def applies_to(self, target: ScanTarget, file_header: bytes | None = None) -> bool:
+        """This engine inspects process inventory records, not file paths."""
+        return target.kind == "process"
+
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Check PID reuse, path authenticity and low-confidence network indicators."""
         if target.kind != "process" or psutil is None:

@@ -146,6 +146,26 @@ CREATE TABLE IF NOT EXISTS scan_engine_metrics (
     duration_seconds REAL NOT NULL DEFAULT 0,
     input_size_bytes INTEGER NOT NULL DEFAULT 0,
     signals INTEGER NOT NULL DEFAULT 0,
+    not_applicable INTEGER NOT NULL DEFAULT 0,
+    not_run INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(session_id, engine)
 );
 CREATE INDEX IF NOT EXISTS ix_engine_metrics_session ON scan_engine_metrics(session_id);
+
+
+-- One read-only coverage record per target/engine; never interpreted as a
+-- malicious finding. A successful empty result is not a guarantee of safety.
+CREATE TABLE IF NOT EXISTS scan_target_engines (
+    session_id TEXT NOT NULL REFERENCES scan_sessions(id),
+    target_path TEXT NOT NULL,
+    engine TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN
+        ('success','skipped','error','not_applicable','not_run')),
+    duration_seconds REAL NOT NULL DEFAULT 0,
+    input_size_bytes INTEGER NOT NULL DEFAULT 0,
+    signal_count INTEGER NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(session_id, target_path, engine)
+);
+CREATE INDEX IF NOT EXISTS ix_target_engine_by_session
+    ON scan_target_engines(session_id, target_path);

@@ -130,6 +130,10 @@ class PersistenceEngine(DetectionEngine):
             pass
         return targets
 
+    def applies_to(self, target: ScanTarget, file_header: bytes | None = None) -> bool:
+        """This engine inspects autorun inventory records only."""
+        return target.kind == "persistence"
+
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Identify suspicious path and masquerading combinations in autostarts."""
         if target.kind != "persistence":

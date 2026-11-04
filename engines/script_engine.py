@@ -62,6 +62,13 @@ class ScriptEngine(DetectionEngine):
             details={"indicator_categories": indicators, "executed": False},
         )]
 
+    def applies_to(self, target: ScanTarget, file_header: bytes | None = None) -> bool:
+        """Script and macro paths are classified by supported extensions."""
+        return (
+            target.kind == "file"
+            and target.path.suffix.lower() in _SCRIPT_SUFFIXES | _OFFICE_SUFFIXES
+        )
+
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Read an eligible script or a bounded macro-enabled Office document."""
         if target.kind != "file":

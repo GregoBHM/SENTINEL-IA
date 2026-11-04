@@ -96,6 +96,15 @@ def test_member_records_are_persisted_without_changing_threat_counts(
     assert summary.status is ScanStatus.COMPLETED
     assert summary.finding_files == 0
     assert summary.errors == 0
+    assert summary.omitted_checks == 1  # One grouped warning per partial archive.
+    with store.connection() as conn:
+        row = conn.execute(
+            "SELECT event_code,params_json FROM scan_coverage "
+            "WHERE session_id=? AND engine='archive'",
+            (summary.session_id,),
+        ).fetchone()
+    assert row["event_code"] == "SCAN.ARCHIVE.PARTIAL"
+    assert '"uninspected_members": 1' in row["params_json"]
     found = store.get_archive_members(summary.session_id, archive)
     states = {m["member_path"]: m["status"] for m in found}
     assert states[str(archive)] == "partial"

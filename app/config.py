@@ -28,6 +28,11 @@ class ScanConfig:
     max_pending: int = 12
     yara_max_file_size: int = 64 * 1024 * 1024
     yara_timeout_seconds: int = 20
+    yara_backend: str = field(
+        default_factory=lambda: os.environ.get(
+            "ONEGUARD_YARA_BACKEND", "classic"
+        ).strip().lower()
+    )
     online_consent: bool = False
     online_enabled: bool = False
     vt_api_key: str = field(default_factory=lambda: os.environ.get("ONEGUARD_VT_API_KEY", ""))
@@ -49,6 +54,8 @@ class ScanConfig:
             raise ValueError("max_pending debe ser >= max_workers")
         if self.yara_timeout_seconds < 1 or self.yara_max_file_size < 1:
             raise ValueError("Los límites YARA deben ser positivos")
+        if self.yara_backend not in ("classic", "yarax"):
+            raise ValueError("yara_backend debe ser classic o yarax")
         if not (1 <= self.archive_max_depth <= 10 and
                 1 <= self.archive_max_entries <= 100000 and
                 0 < self.archive_max_member_bytes <= self.archive_max_total_bytes <= 1024**3 and
@@ -77,7 +84,7 @@ def load_config_file(path: Path) -> ScanConfig:
     if not isinstance(scanner, dict) or not isinstance(paths, dict):
         raise ValueError("Las secciones scanner/paths deben ser tablas")
     allowed_scanner = {"max_workers", "max_pending", "yara_max_file_size_mb",
-                       "yara_timeout_seconds", "exclusions", "pe_max_file_size_mb",
+                       "yara_timeout_seconds", "yara_backend", "exclusions", "pe_max_file_size_mb",
                        "script_max_bytes_mb", "archive_max_depth", "archive_max_entries",
                        "archive_max_total_bytes_mb", "archive_max_member_bytes_mb",
                        "archive_timeout_seconds"}
@@ -97,6 +104,9 @@ def load_config_file(path: Path) -> ScanConfig:
         yara_timeout_seconds=int(scanner.get(
             "yara_timeout_seconds", defaults.yara_timeout_seconds
         )),
+        yara_backend=str(scanner.get(
+            "yara_backend", defaults.yara_backend
+        )).strip().lower(),
         pe_max_file_size=int(scanner.get("pe_max_file_size_mb", 128)) * 1024**2,
         script_max_bytes=int(scanner.get("script_max_bytes_mb", 2)) * 1024**2,
         archive_max_depth=int(scanner.get("archive_max_depth", defaults.archive_max_depth)),

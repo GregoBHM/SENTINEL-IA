@@ -92,6 +92,20 @@ def test_verified_pid_and_quoted_autorun_reference_are_separate_observations() -
     assert "--do-not-run" not in repr(autorun)
 
 
+def test_tiny_birth_time_change_is_not_accepted_as_same_process() -> None:
+    """A recycled PID cannot be rescued by a broad half-second tolerance."""
+    api = SimpleNamespace(Process=lambda pid: FakeProcess(birth=1000.05))
+    assert observe_process_identity(_proc_target(), api).status == "stale"
+
+
+def test_explicit_unquoted_local_executable_can_be_parsed() -> None:
+    path, reason = direct_autostart_executable(
+        r"C:\Synthetic\Acme\agent.exe /background"
+    )
+    assert normalize_windows_executable(path) == normalize_windows_executable(EXE)
+    assert reason == ""
+
+
 def test_missing_birth_timestamp_and_pid_reuse_are_not_verified() -> None:
     api = SimpleNamespace(Process=lambda pid: FakeProcess(birth=1002.0))
     assert observe_process_identity(_proc_target(), api).status == "stale"

@@ -459,6 +459,10 @@ class OneGuardWindow(QMainWindow):
         log_title = QHBoxLayout()
         log_title.addWidget(label("REGISTRO DE ACTIVIDAD", "Eyebrow", wrap=False))
         log_title.addStretch()
+        self.file_coverage_button = QPushButton("Por archivo")
+        self.file_coverage_button.setEnabled(False)
+        self.file_coverage_button.clicked.connect(self.show_file_coverage)
+        log_title.addWidget(self.file_coverage_button)
         self.coverage_detail_button = QPushButton("Ver omisiones")
         self.coverage_detail_button.setEnabled(False)
         self.coverage_detail_button.clicked.connect(self.show_coverage_details)
@@ -746,6 +750,7 @@ class OneGuardWindow(QMainWindow):
         self.threats_tile.set_count(0)
         self.partial_tile.set_count(0)
         self.coverage_detail_button.setEnabled(False)
+        self.file_coverage_button.setEnabled(False)
         self.error_tile.set_count(0)
         self.global_progress.setRange(0, 0)
         self.phase_progress.setRange(0, 100)
@@ -948,14 +953,14 @@ class OneGuardWindow(QMainWindow):
         dialog.resize(1100, 560)
         layout = QVBoxLayout(dialog)
         layout.addWidget(label(
-            "Preparado no significa cobertura completa. Las invocaciones "
-            "finalizadas pueden corresponder a objetivos no aplicables; "
-            "las señales emitidas no son infecciones confirmadas."
+            "Preparado no significa que todos los archivos fueron analizados. "
+            "Solo «Finalizadas» cuenta comprobaciones sin excepción. "
+            "«No aplica» no es éxito ni omisión; una señal no confirma infección."
         ))
-        table = QTableWidget(len(names), 8)
+        table = QTableWidget(len(names), 10)
         table.setHorizontalHeaderLabels([
-            "Motor", "Estado", "Invocaciones", "Finalizadas", "Omitidas",
-            "Errores", "Señales", "Tiempo acumulado",
+            "Motor", "Estado", "Intentos", "Finalizadas", "Omitidas",
+            "Errores", "No aplica", "Sin ejecutar", "Señales", "Tiempo acumulado",
         ])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -979,17 +984,24 @@ class OneGuardWindow(QMainWindow):
             checks = int(metrics.get("checks", 0))
             errors = int(metrics.get("errors", 0))
             skipped = int(metrics.get("skipped", 0))
+            not_applicable = int(metrics.get("not_applicable", 0))
+            not_run = int(metrics.get("not_run", 0))
             state = states.get(info.get("state", ""), "Sin inventario")
             if info.get("state") == "prepared" and checks > 0:
                 state = "Con errores" if errors else (
                     "Con omisiones" if skipped else "Invocado"
                 )
+            elif info.get("state") == "prepared" and not_run:
+                state = "Interrumpido"
+            elif info.get("state") == "prepared" and not_applicable:
+                state = "Sin objetivos compatibles"
             title = str(info.get("title") or name)
             values = (
                 title, state, str(checks) if checks else "—",
                 str(int(metrics.get("completed", 0))) if checks else "—",
                 str(skipped) if checks else "—",
                 str(errors) if checks else "—",
+                str(not_applicable), str(not_run),
                 str(int(metrics.get("signals", 0))) if checks else "—",
                 f"{float(metrics.get('duration_seconds', 0)):.2f} s"
                 if checks else "—",
@@ -1075,6 +1087,7 @@ class OneGuardWindow(QMainWindow):
         kind = event.kind
         if kind == "started":
             self.session_id = payload["session_id"]
+            self.file_coverage_button.setEnabled(True)
             self.scan_status.setText("Analizando (sin estimación global fiable)")
             self.pause_button.setEnabled(True)
             self._log("INFO", "Sesión " + self.session_id[:12] + " iniciada")

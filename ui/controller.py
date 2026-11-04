@@ -23,6 +23,7 @@ from engines.persistence_engine import PersistenceEngine
 from engines.process_engine import ProcessEngine
 from engines.script_engine import ScriptEngine
 from engines.yara_engine import YaraEngine
+from engines.yara_x_engine import YaraXEngine
 from ui.profiles import ScanPlan
 
 
@@ -72,7 +73,8 @@ class ScanController:
             engines = [hash_engine]
             yara_engine = None
             try:
-                yara_engine = YaraEngine(
+                engine_type = YaraXEngine if config.yara_backend == "yarax" else YaraEngine
+                yara_engine = engine_type(
                     config.rule_directory, max_file_size=config.yara_max_file_size,
                     timeout_seconds=config.yara_timeout_seconds,
                 )
@@ -80,7 +82,7 @@ class ScanController:
             except RuleLoadError as exc:
                 self.bus.publish(make_event(
                     "warning", "SCAN.YARA.UNAVAILABLE", engine="yara",
-                    message=f"{type(exc).__name__}: {exc}",
+                    message=f"{config.yara_backend}: {type(exc).__name__}: {exc}",
                 ))
             pe_engine = PEEngine(max_file_size=config.pe_max_file_size)
             script_engine = ScriptEngine(max_script_bytes=config.script_max_bytes)

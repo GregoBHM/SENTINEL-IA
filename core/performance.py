@@ -75,18 +75,23 @@ class PerformanceMonitor:
                 entry = self._engine.setdefault(timing.engine, {
                     "checks": 0, "completed": 0, "skipped": 0, "errors": 0,
                     "duration_seconds": 0.0, "input_size_bytes": 0,
-                    "signals": 0,
+                    "signals": 0, "not_applicable": 0, "not_run": 0,
                 })
-                entry["checks"] += 1
-                if timing.status == "success":
-                    entry["completed"] += 1
-                elif timing.status == "skipped":
-                    entry["skipped"] += 1
+                if timing.status == "not_applicable":
+                    entry["not_applicable"] += 1
+                elif timing.status == "not_run":
+                    entry["not_run"] += 1
                 else:
-                    entry["errors"] += 1
-                entry["duration_seconds"] += max(0.0, timing.duration_seconds)
-                entry["input_size_bytes"] += max(0, timing.input_size_bytes)
-                entry["signals"] += max(0, timing.signal_count)
+                    entry["checks"] += 1
+                    if timing.status == "success":
+                        entry["completed"] += 1
+                    elif timing.status == "skipped":
+                        entry["skipped"] += 1
+                    else:
+                        entry["errors"] += 1
+                    entry["duration_seconds"] += max(0.0, timing.duration_seconds)
+                    entry["input_size_bytes"] += max(0, timing.input_size_bytes)
+                    entry["signals"] += max(0, timing.signal_count)
             now = self._clock()
             active = self._active_time(now)
             self._samples.append((active, self._completed))

@@ -49,10 +49,13 @@ class PEEngine(DetectionEngine):
         When header bytes are unavailable the extension is a conservative
         fallback; inaccessible files are reported through normal scan errors.
         """
-        return target.kind == "file" and (
-            (file_header is not None and file_header.startswith(b"MZ"))
-            or target.path.suffix.lower() in _PE_SUFFIXES
-        )
+        if target.kind != "file":
+            return False
+        if file_header is not None:
+            # Known non-PE bytes never count as inspected, even with an .exe suffix.
+            return file_header.startswith(b"MZ")
+        # If the initial header read failed, retain conservative extension hints.
+        return target.path.suffix.lower() in _PE_SUFFIXES
 
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Inspect selected PE-like files and Authenticode trust status."""

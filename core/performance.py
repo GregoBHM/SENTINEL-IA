@@ -22,6 +22,7 @@ class EngineTiming:
     duration_seconds: float
     input_size_bytes: int
     signal_count: int = 0
+    reason: str = ""
 
 
 class PerformanceMonitor:

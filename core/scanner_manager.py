@@ -383,6 +383,43 @@ class ScannerManager:
                 "; ".join(outcome.errors + outcome.skips) or None,
                 archive_members=outcome.archive_members,
             )
+            # Archive members may be unavailable even when the ArchiveEngine
+            # itself returned normally. Emit one grouped coverage notice per
+            # container rather than one misleading "malware finding" per member.
+            limited_members = [
+                row for row in outcome.archive_members
+                if row.status != "inspected"
+            ]
+            if limited_members:
+                affected = [
+                    row for row in limited_members
+                    if row.member_path != str(outcome.path)
+                ] or limited_members
+                counts = {
+                    "uninspected_members": sum(
+                        row.status == "uninspected" for row in affected
+                    ),
+                    "partial_members": sum(
+                        row.status == "partial" for row in affected
+                    ),
+                }
+                notice = make_event(
+                    "skipped", "SCAN.ARCHIVE.PARTIAL", engine="archive",
+                    path=str(outcome.path), scan_id=summary.session_id,
+                    params=counts,
+                    message=(
+                        "Archivo comprimido con cobertura parcial: "
+                        f"{counts['uninspected_members']} no inspeccionados, "
+                        f"{counts['partial_members']} parciales"
+                    ),
+                )
+                self.store.record_coverage(
+                    summary.session_id, outcome.path, "archive",
+                    "SCAN.ARCHIVE.PARTIAL", counts,
+                    notice.payload["message"],
+                )
+                summary.omitted_checks += 1
+                self.event_bus.publish(notice)
             if outcome.kind == "file":
                 summary.scanned_files += 1
             else:

@@ -12,6 +12,7 @@ from typing import Any, Iterator
 
 from core.models import AggregatedFinding, FileHashes, ScanSummary
 from core.performance import EngineTiming
+from core.archive_members import ArchiveMemberCoverage
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -142,8 +143,9 @@ class SQLiteStore:
         self, session_id: str, path: Path, status: str,
         timings: list[EngineTiming], sha256: str | None = None,
         error: str | None = None,
+        archive_members: list[ArchiveMemberCoverage] | None = None,
     ) -> None:
-        """Persist target and per-motor coverage in one local transaction.
+        """Persist target, motors and archive members in one local transaction.
 
         Inapplicable engines are recorded explicitly, never as successful scans.
         """
@@ -167,6 +169,39 @@ class SQLiteStore:
                         for timing in timings
                     ],
                 )
+            if archive_members:
+                conn.executemany(
+                    """INSERT OR REPLACE INTO scan_archive_members
+                       (session_id,container_path,member_path,archive_format,
+                        status,reason,bytes_read,depth,checks_json)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    [
+                        (session_id, str(path), row.member_path,
+                         row.archive_format, row.status, row.reason[:500],
+                         max(0, int(row.bytes_read)), max(1, int(row.depth)),
+                         json.dumps(row.checks, ensure_ascii=False))
+                        for row in archive_members
+                    ],
+                )
+
+    def get_archive_members(
+        self, session_id: str, container: Path | str, *, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Return a bounded local-only view of member coverage evidence."""
+        maximum = max(1, min(int(limit), 1000))
+        with self.connection() as conn:
+            rows = conn.execute(
+                """SELECT member_path,archive_format,status,reason,
+                          bytes_read,depth,checks_json
+                   FROM scan_archive_members
+                   WHERE session_id=? AND container_path=?
+                   ORDER BY depth, member_path LIMIT ?""",
+                (session_id, str(container), maximum),
+            ).fetchall()
+        return [
+            {**dict(row), "checks": json.loads(row["checks_json"])}
+            for row in rows
+        ]
 
     def get_target_engine_runs(
         self, session_id: str, path: Path | str

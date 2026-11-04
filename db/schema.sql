@@ -169,3 +169,23 @@ CREATE TABLE IF NOT EXISTS scan_target_engines (
 );
 CREATE INDEX IF NOT EXISTS ix_target_engine_by_session
     ON scan_target_engines(session_id, target_path);
+
+
+-- Read-only per-member coverage, not a malware verdict. Stored only locally.
+-- Empty/no signal is never equivalent to "clean"; 7z metadata is uninspected.
+CREATE TABLE IF NOT EXISTS scan_archive_members (
+    session_id TEXT NOT NULL REFERENCES scan_sessions(id),
+    container_path TEXT NOT NULL,
+    member_path TEXT NOT NULL,
+    archive_format TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+        status IN ('inspected', 'partial', 'uninspected')
+    ),
+    reason TEXT NOT NULL DEFAULT '',
+    bytes_read INTEGER NOT NULL DEFAULT 0,
+    depth INTEGER NOT NULL DEFAULT 1,
+    checks_json TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY(session_id, container_path, member_path)
+);
+CREATE INDEX IF NOT EXISTS ix_archive_members_container
+    ON scan_archive_members(session_id, container_path);

@@ -43,6 +43,10 @@ _CATALOG: dict[str, tuple[str, str, str, str | None]] = {
         "coverage", "WARN", "YARA agotó el tiempo de inspección",
         "Revisar archivos omitidos",
     ),
+    "SCAN.ARCHIVE.PARTIAL": (
+        "coverage", "WARN", "Contenido comprimido parcialmente inspeccionado",
+        "Consultar contenido comprimido",
+    ),
     "SCAN.ENGINE.SKIPPED": (
         "coverage", "WARN", "Un motor omitió un objetivo",
         "Ver cobertura",
@@ -77,6 +81,10 @@ _DESCRIPTIONS = {
     "SCAN.YARA.TIMEOUT": (
         "El motor alcanzó el tiempo máximo antes de completar una comprobación. "
         "El archivo queda con cobertura parcial; no equivale a infección."
+    ),
+    "SCAN.ARCHIVE.PARTIAL": (
+        "Un contenedor contiene miembros no inspeccionados o parcialmente "
+        "inspeccionados. Comprueba el detalle antes de interpretar el resultado."
     ),
     "SCAN.ENGINE.SKIPPED": (
         "Un componente no pudo revisar este objetivo. "
@@ -154,6 +162,14 @@ def present_event(event: ScanEvent) -> ClientMessage:
     category, level, title, action = _CATALOG[code]
     params = payload.get("message_params") or {}
     description = _DESCRIPTIONS.get(code, "")
+    if code == "SCAN.ARCHIVE.PARTIAL":
+        uninspected = params.get("uninspected_members")
+        partial = params.get("partial_members")
+        if isinstance(uninspected, int) and isinstance(partial, int):
+            description = (
+                f"{uninspected} miembros no inspeccionados y {partial} "
+                "parcialmente inspeccionados. Ver detalle del contenedor."
+            )
     if code == "SCAN.YARA.SIZE_LIMIT":
         limit = params.get("limit_bytes")
         size = params.get("size_bytes")

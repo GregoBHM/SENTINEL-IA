@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+from contextvars import ContextVar
 import os
 import time
 import zipfile
@@ -16,6 +17,8 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
 from core.aggregator import severity_from_score
+from core.archive_members import ArchiveMemberCoverage
+from core.file_formats import identify_archive
 from core.detection_engine import DetectionEngine
 from core.errors import ScanSkipped
 from core.heuristics import has_misleading_extension
@@ -34,6 +37,9 @@ except ImportError:
     py7zr = None
 
 _ARCHIVES = {".zip", ".rar", ".7z"}
+_COVERAGE: ContextVar[list[ArchiveMemberCoverage] | None] = ContextVar(
+    "oneguard_archive_member_coverage", default=None
+)
 
 
 @dataclass(slots=True)
@@ -71,16 +77,44 @@ class ArchiveEngine(DetectionEngine):
             raise ValueError("Parámetros de archivo comprimido inválidos")
 
     def applies_to(self, target: ScanTarget, file_header: bytes | None = None) -> bool:
-        """Supported archive types are routed by extension.
+        """Route renamed ZIP/RAR/7z by magic, preserving extension fallback."""
+        return (
+            target.kind == "file"
+            and identify_archive(file_header, target.path) is not None
+        )
 
-        Renamed archive formats need explicit decoder routing before they can
-        be claimed as inspected; no false coverage for these objects.
+    def scan_with_coverage(
+        self, target: ScanTarget
+    ) -> tuple[list[Finding], list[ArchiveMemberCoverage]]:
+        """Return findings and per-member evidence without shared mutable state.
+
+        ContextVar capture is isolated per worker thread/scan invocation.
+        Legacy scan() remains supported for CLI and third-party callers.
         """
-        return target.kind == "file" and target.path.suffix.lower() in _ARCHIVES
+        collected: list[ArchiveMemberCoverage] = []
+        token = _COVERAGE.set(collected)
+        try:
+            findings = self.scan(target)
+            return findings, collected
+        finally:
+            _COVERAGE.reset(token)
+
+    def _record_member(
+        self, label: str, kind: str, status: str, depth: int, *,
+        reason: str = "", size: int = 0, checks: tuple[str, ...] = (),
+    ) -> None:
+        """Append bounded local evidence; never treat omission as a detection."""
+        collected = _COVERAGE.get()
+        if collected is not None and len(collected) < self.max_entries + 5:
+            collected.append(ArchiveMemberCoverage(
+                member_path=label, archive_format=kind, status=status,
+                reason=reason[:500], bytes_read=max(0, size),
+                depth=max(1, depth), checks=checks,
+            ))
 
     def scan(self, target: ScanTarget) -> list[Finding]:
-        """Read a supported container while tracking a shared resource budget."""
-        if target.kind != "file" or target.path.suffix.lower() not in _ARCHIVES:
+        """Read an identified container while enforcing the global budget."""
+        if target.kind != "file":
             return []
         if target.path.stat().st_size > self.max_total_bytes:
             raise ScanSkipped("Contenedor supera el límite de entrada")
@@ -91,6 +125,8 @@ class ArchiveEngine(DetectionEngine):
                 blob = handle.read(self.max_total_bytes + 1)
             if len(blob) > self.max_total_bytes:
                 raise ScanSkipped("Contenedor supera límite de memoria")
+            if identify_archive(blob[:8], target.path.name) is None:
+                return []
             return self._scan_blob(blob, target.path.name, str(target.path), 1, budget)
         except (zipfile.BadZipFile, OSError, ValueError, EOFError) as exc:
             raise ScanSkipped(f"Error de lectura de comprimido: {type(exc).__name__}") from exc
@@ -127,23 +163,43 @@ class ArchiveEngine(DetectionEngine):
     ) -> list[Finding]:
         """Walk nested archives; all child labels retain the parent provenance."""
         if depth > self.max_depth:
+            self._record_member(
+                label, "container", "uninspected", depth,
+                reason="Límite de profundidad",
+            )
             return [self._report(label, "depth_limit", "Contenido anidado no analizado: límite de profundidad")]
         if time.monotonic() > budget.deadline:
+            self._record_member(
+                label, "container", "uninspected", depth,
+                reason="Límite de tiempo agotado",
+            )
             return [self._report(label, "time_limit", "Inspección incompleta: límite de tiempo")]
-        suffix = Path(name).suffix.lower()
-        if suffix == ".zip":
-            return self._scan_zip(blob, label, depth, budget)
-        if suffix == ".rar":
-            return self._scan_rar(blob, label, depth, budget)
-        if suffix == ".7z":
-            return self._scan_7z(blob, label, depth, budget)
-        return self._inspect_payload(blob, name, label)
+        identity = identify_archive(blob[:8], name)
+        if identity is None:
+            return self._inspect_payload(blob, name, label)
+        if identity.kind == "zip":
+            results = self._scan_zip(blob, label, depth, budget)
+        elif identity.kind == "rar":
+            results = self._scan_rar(blob, label, depth, budget)
+        else:
+            results = self._scan_7z(blob, label, depth, budget)
+        missing = [x for x in results if x.details.get("limitation")]
+        self._record_member(
+            label, identity.kind, "partial" if missing else "inspected", depth,
+            reason=(missing[0].reason if missing else ""),
+            size=len(blob), checks=("container_metadata",),
+        )
+        return results
 
     def _visit(self, handle: BinaryIO, name: str, label: str,
                depth: int, budget: ArchiveBudget) -> list[Finding]:
         """Read an entry with the global budget and dispatch to engines."""
         budget.entries += 1
         if budget.entries > self.max_entries:
+            self._record_member(
+                label, "unknown", "uninspected", depth + 1,
+                reason="Límite de entradas alcanzado",
+            )
             return [self._report(label, "entry_limit", "Inspección incompleta: exceso de entradas")]
         findings = []
         unified = name.replace("\\", "/")
@@ -157,10 +213,36 @@ class ArchiveEngine(DetectionEngine):
             data = self._read_bounded(handle, budget)
         except ScanSkipped as exc:
             findings.append(self._report(label, "resource_limit", f"Inspección incompleta: {exc}"))
+            self._record_member(
+                label, "unknown", "uninspected", depth + 1, reason=str(exc)
+            )
             return findings
-        findings.extend(self._scan_blob(data, name, label, depth + 1, budget)
-                        if Path(name).suffix.lower() in _ARCHIVES
-                        else self._inspect_payload(data, name, label))
+        identity = identify_archive(data[:8], name)
+        if identity is not None:
+            findings.extend(self._scan_blob(data, name, label, depth + 1, budget))
+        else:
+            observed = self._inspect_payload(data, name, label)
+            findings.extend(observed)
+            missing = [f for f in observed if f.details.get("limitation")]
+            performed = ["sha256"]
+            if self.yara_engine is not None and not any(
+                f.rule_id == "yara_incomplete" for f in observed
+            ):
+                performed.append("yara")
+            suffix = Path(name).suffix.lower()
+            if suffix in {".ps1", ".psm1", ".js", ".vbs", ".hta", ".bat", ".cmd"} and not any(
+                f.rule_id == "script_incomplete" for f in observed
+            ):
+                performed.append("script_static")
+            if data.startswith(b"MZ") and not any(
+                f.rule_id == "pe_dependency" for f in observed
+            ):
+                performed.append("pe_static")
+            self._record_member(
+                label, "file", "partial" if missing else "inspected", depth + 1,
+                reason=(missing[0].reason if missing else ""),
+                size=len(data), checks=tuple(performed),
+            )
         return findings
 
     def _scan_zip(self, blob: bytes, label: str, depth: int,
@@ -181,9 +263,17 @@ class ArchiveEngine(DetectionEngine):
                     child = label + "::" + entry.filename
                     if entry.flag_bits & 0x1:
                         findings.append(self._report(child, "encrypted", "No se pudo inspeccionar: entrada cifrada"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason="Entrada cifrada",
+                        )
                         continue
                     if entry.file_size > self.max_member_bytes:
                         findings.append(self._report(child, "size_limit", "No inspeccionado: archivo interno demasiado grande"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason="Tamaño interno superior al límite",
+                        )
                         continue
                     if entry.compress_size and entry.file_size / entry.compress_size > 100:
                         findings.append(self._report(child, "expansion_ratio", "Relación de expansión elevada; inspección limitada"))
@@ -192,6 +282,10 @@ class ArchiveEngine(DetectionEngine):
                             findings.extend(self._visit(stream, entry.filename, child, depth, budget))
                     except (OSError, RuntimeError, zipfile.BadZipFile, EOFError, ValueError) as exc:
                         findings.append(self._report(child, "entry_error", f"Entrada no analizada: {type(exc).__name__}"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason=f"No se pudo leer: {type(exc).__name__}",
+                        )
                     if budget.entries > self.max_entries or budget.consumed > self.max_total_bytes:
                         break
         except (OSError, zipfile.BadZipFile, EOFError) as exc:
@@ -218,15 +312,27 @@ class ArchiveEngine(DetectionEngine):
                     child = label + "::" + entry.filename
                     if entry.needs_password():
                         findings.append(self._report(child, "encrypted", "RAR cifrado; contenido no inspeccionado"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason="RAR cifrado",
+                        )
                         continue
                     if entry.file_size > self.max_member_bytes:
                         findings.append(self._report(child, "size_limit", "RAR interno excede límite"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason="Tamaño interno superior al límite",
+                        )
                         continue
                     try:
                         with archive.open(entry) as stream:
                             findings.extend(self._visit(stream, entry.filename, child, depth, budget))
                     except Exception as exc:
                         findings.append(self._report(child, "rar_error", f"Entrada RAR inaccesible: {type(exc).__name__}"))
+                        self._record_member(
+                            child, "unknown", "uninspected", depth + 1,
+                            reason=f"Error RAR: {type(exc).__name__}",
+                        )
                     if budget.entries > self.max_entries:
                         break
         except Exception as exc:
@@ -244,9 +350,16 @@ class ArchiveEngine(DetectionEngine):
         try:
             with py7zr.SevenZipFile(io.BytesIO(blob), mode="r") as archive:
                 entries = archive.list()
+                visible = entries[:min(self.max_entries, 100)]
                 messages = [self._report(label + "::" + str(x.filename), "seven_zip_pending",
                            "7z: contenido pendiente de inspección en worker aislado")
-                            for x in entries[:min(self.max_entries, 100)]]
+                            for x in visible]
+                for entry in visible:
+                    self._record_member(
+                        label + "::" + str(entry.filename), "unknown",
+                        "uninspected", depth + 1,
+                        reason="7z solo inventariado; contenido no inspeccionado",
+                    )
                 if len(entries) > 100:
                     messages.append(self._report(label, "entry_limit", "7z: inventario truncado"))
                 return messages
@@ -287,8 +400,14 @@ class ArchiveEngine(DetectionEngine):
             except Exception:
                 findings.append(self._report(label, "yara_incomplete", "No se pudo completar YARA del archivo interno"))
         if Path(name).suffix.lower() in {".ps1", ".psm1", ".js", ".vbs", ".hta", ".bat", ".cmd"}:
-            findings.extend(self.script_engine.inspect_bytes(blob, label))
-        if Path(name).suffix.lower() in {".exe", ".dll", ".sys", ".scr"}:
+            if len(blob) > self.script_engine.max_script_bytes:
+                findings.append(self._report(
+                    label, "script_incomplete",
+                    "Script interno no analizado: superior al límite de scripts",
+                ))
+            else:
+                findings.extend(self.script_engine.inspect_bytes(blob, label))
+        if blob.startswith(b"MZ"):
             try:
                 findings.extend(self.pe_engine.inspect_bytes(blob, label))
             except ScanSkipped as exc:

@@ -50,6 +50,10 @@ class YaraEngine(DetectionEngine):
         self.max_file_size = max_file_size
         self.timeout_seconds = timeout_seconds
 
+    def applies_to(self, target: ScanTarget, file_header: bytes | None = None) -> bool:
+        """A loaded YARA ruleset may inspect any file type."""
+        return target.kind == "file"
+
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Find matched YARA rules with bounded time and explainable metadata."""
         if target.kind != "file":

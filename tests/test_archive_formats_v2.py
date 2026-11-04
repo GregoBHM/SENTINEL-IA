@@ -96,6 +96,7 @@ def test_member_records_are_persisted_without_changing_threat_counts(
     assert summary.status is ScanStatus.COMPLETED
     assert summary.finding_files == 0
     assert summary.errors == 0
+    assert summary.engine_metrics["archive"]["signals"] == 0
     assert summary.omitted_checks == 1  # One grouped warning per partial archive.
     with store.connection() as conn:
         row = conn.execute(

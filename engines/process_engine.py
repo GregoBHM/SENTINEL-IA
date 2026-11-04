@@ -68,7 +68,7 @@ class ProcessEngine(DetectionEngine):
         try:
             proc = psutil.Process(int(target.metadata["pid"]))
             start = target.metadata.get("create_time")
-            if start and abs(proc.create_time() - float(start)) > 0.5:
+            if start is None or abs(proc.create_time() - float(start)) > 0.01:
                 return []  # PID reused since discovery
             name = proc.name().lower()
             path = proc.exe()

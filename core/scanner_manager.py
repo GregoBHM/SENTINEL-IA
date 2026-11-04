@@ -387,12 +387,16 @@ class ScannerManager:
                 timings=outcome.engine_timings,
             )
             status = "scanned"
-            if outcome.errors or outcome.skips or any(
+            if outcome.errors:
+                status = "partial" if outcome.succeeded else "error"
+            elif outcome.skips or any(
                 item.details.get("limitation") for item in outcome.signals
             ) or any(
                 member.status != "inspected" for member in outcome.archive_members
             ):
-                status = "partial" if outcome.succeeded else "error"
+                # A known coverage omission is not an unexpected engine error,
+                # even if no other engine was applicable to the target.
+                status = "partial"
             if not outcome.succeeded and all(
                 item.status in ("not_applicable", "not_run")
                 for item in outcome.engine_timings

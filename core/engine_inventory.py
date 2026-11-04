@@ -25,6 +25,11 @@ def build_engine_inventory(
 ) -> list[dict[str, str]]:
     """Report requested and available components without claiming full coverage."""
     present = {str(engine.name) for engine in engines}
+    yara_backend = next(
+        (str(getattr(engine, "backend", "classic"))
+         for engine in engines if str(engine.name) == "yara"),
+        None,
+    )
     rows: list[dict[str, str]] = []
     for engine_id, title in _LABELS:
         available = engine_id in present
@@ -32,7 +37,13 @@ def build_engine_inventory(
             "id": engine_id, "title": title,
             "state": "prepared" if available else "unavailable",
             "note": (
-                "Instanciado; la cobertura depende del tipo de objetivo."
+                (
+                    "Backend YARA-X experimental; cobertura según reglas y objetivos."
+                    if engine_id == "yara" and yara_backend == "yarax" else
+                    "Backend YARA clásico; cobertura según reglas y objetivos."
+                    if engine_id == "yara" else
+                    "Instanciado; la cobertura depende del tipo de objetivo."
+                )
                 if available else
                 "No se pudo preparar; revisar registro y configuración."
             ),

@@ -13,6 +13,9 @@ from uuid import uuid4
 
 from app.config import ScanConfig
 from core.aggregator import FindingAggregator
+from core.archive_members import ArchiveMemberCoverage
+from core.file_identity import FileIdentity, observe_file_identity
+from core.system_identity import SystemObservation
 from core.detection_engine import DetectionEngine
 from core.errors import ScanSkipped
 from core.event_bus import EventBus
@@ -40,6 +43,9 @@ class TargetOutcome:
     sha256: str | None = None
     input_size_bytes: int = 0
     engine_timings: list[EngineTiming] = field(default_factory=list)
+    archive_members: list[ArchiveMemberCoverage] = field(default_factory=list)
+    system_observation: SystemObservation | None = None
+    file_identity: FileIdentity | None = None
 
 
 def discover_files(
@@ -188,6 +194,13 @@ class ScannerManager:
                     file_header = handle.read(8)
             except OSError:
                 pass
+        # Record content identity only for plausible PE targets. This separate
+        # observation cannot change detection scores or authorize remediation.
+        if target.kind == "file" and file_header is not None and (
+            file_header.startswith(b"MZ")
+            or target.path.suffix.lower() in {".exe", ".dll", ".sys", ".scr"}
+        ) and not self._cancel.is_set():
+            outcome.file_identity = observe_file_identity(target.path)
         for idx, engine in enumerate(self.engines):
             if self._cancel.is_set():
                 for remaining in self.engines[idx:]:
@@ -206,10 +219,34 @@ class ScannerManager:
                     state = "not_applicable"
                     reason = "El tipo de objetivo no corresponde a este motor"
                     continue
-                signals = engine.scan(target)
+                detailed_scan = getattr(engine, "scan_with_coverage", None)
+                observed_scan = getattr(engine, "scan_with_observation", None)
+                if callable(detailed_scan):
+                    signals, members = detailed_scan(target)
+                    outcome.archive_members.extend(members)
+                elif callable(observed_scan):
+                    signals, observation = observed_scan(target)
+                    outcome.system_observation = observation
+                    if target.kind == "process" and observation.status != "verified":
+                        # Stale/reused/unreadable PIDs are unknown, never clean.
+                        state = "skipped"
+                        reason = observation.note
+                        outcome.skips.append(f"{engine.name}: {reason}")
+                        outcome.skip_details.append({
+                            "engine": engine.name,
+                            "code": "SCAN.ENGINE.SKIPPED",
+                            "params": {"reason": observation.status},
+                        })
+                else:
+                    signals = engine.scan(target)
                 outcome.signals.extend(signals)
-                signal_count = len(signals)
-                outcome.succeeded += 1
+                # Coverage warnings are not detection signals; do not inflate
+                # the dashboard's per-engine "Señales" counter.
+                signal_count = sum(
+                    not finding.details.get("limitation") for finding in signals
+                )
+                if state == "success":
+                    outcome.succeeded += 1
             except ScanSkipped as exc:
                 state = "skipped"
                 reason = str(exc)
@@ -359,10 +396,16 @@ class ScannerManager:
                 timings=outcome.engine_timings,
             )
             status = "scanned"
-            if outcome.errors or outcome.skips or any(
-                item.details.get("limitation") for item in outcome.signals
-            ):
+            if outcome.errors:
                 status = "partial" if outcome.succeeded else "error"
+            elif outcome.skips or any(
+                item.details.get("limitation") for item in outcome.signals
+            ) or any(
+                member.status != "inspected" for member in outcome.archive_members
+            ):
+                # A known coverage omission is not an unexpected engine error,
+                # even if no other engine was applicable to the target.
+                status = "partial"
             if not outcome.succeeded and all(
                 item.status in ("not_applicable", "not_run")
                 for item in outcome.engine_timings
@@ -372,7 +415,47 @@ class ScannerManager:
                 summary.session_id, outcome.path, status,
                 outcome.engine_timings, outcome.sha256,
                 "; ".join(outcome.errors + outcome.skips) or None,
+                archive_members=outcome.archive_members,
+                system_observation=outcome.system_observation,
+                file_identity=outcome.file_identity,
             )
+            # Archive members may be unavailable even when the ArchiveEngine
+            # itself returned normally. Emit one grouped coverage notice per
+            # container rather than one misleading "malware finding" per member.
+            limited_members = [
+                row for row in outcome.archive_members
+                if row.status != "inspected"
+            ]
+            if limited_members:
+                affected = [
+                    row for row in limited_members
+                    if row.member_path != str(outcome.path)
+                ] or limited_members
+                counts = {
+                    "uninspected_members": sum(
+                        row.status == "uninspected" for row in affected
+                    ),
+                    "partial_members": sum(
+                        row.status == "partial" for row in affected
+                    ),
+                }
+                notice = make_event(
+                    "skipped", "SCAN.ARCHIVE.PARTIAL", engine="archive",
+                    path=str(outcome.path), scan_id=summary.session_id,
+                    params=counts,
+                    message=(
+                        "Archivo comprimido con cobertura parcial: "
+                        f"{counts['uninspected_members']} no inspeccionados, "
+                        f"{counts['partial_members']} parciales"
+                    ),
+                )
+                self.store.record_coverage(
+                    summary.session_id, outcome.path, "archive",
+                    "SCAN.ARCHIVE.PARTIAL", counts,
+                    notice.payload["message"],
+                )
+                summary.omitted_checks += 1
+                self.event_bus.publish(notice)
             if outcome.kind == "file":
                 summary.scanned_files += 1
             else:
@@ -417,9 +500,16 @@ class ScannerManager:
                 else set()
             )
             # Archive members have independent content hashes, never the ZIP's hash.
+            # Resource/cipher/decoder limitations describe coverage, not
+            # malware. ArchiveEngine keeps these as informational Finding
+            # objects for its legacy API, but they must never inflate threats.
+            verdict_signals = [
+                signal for signal in outcome.signals
+                if not signal.details.get("limitation")
+            ]
             verdicts = []
-            for member_target in sorted({signal.target for signal in outcome.signals}):
-                member_evidence = [signal for signal in outcome.signals
+            for member_target in sorted({signal.target for signal in verdict_signals}):
+                member_evidence = [signal for signal in verdict_signals
                                    if signal.target == member_target]
                 member_hash = next((s.sha256 for s in member_evidence if s.sha256), None)
                 member_allowlist = (

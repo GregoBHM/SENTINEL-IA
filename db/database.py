@@ -12,6 +12,9 @@ from typing import Any, Iterator
 
 from core.models import AggregatedFinding, FileHashes, ScanSummary
 from core.performance import EngineTiming
+from core.archive_members import ArchiveMemberCoverage
+from core.system_identity import SystemObservation
+from core.file_identity import FileIdentity
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -142,8 +145,11 @@ class SQLiteStore:
         self, session_id: str, path: Path, status: str,
         timings: list[EngineTiming], sha256: str | None = None,
         error: str | None = None,
+        archive_members: list[ArchiveMemberCoverage] | None = None,
+        system_observation: SystemObservation | None = None,
+        file_identity: FileIdentity | None = None,
     ) -> None:
-        """Persist target and per-motor coverage in one local transaction.
+        """Persist target, motors and archive members in one local transaction.
 
         Inapplicable engines are recorded explicitly, never as successful scans.
         """
@@ -167,6 +173,95 @@ class SQLiteStore:
                         for timing in timings
                     ],
                 )
+            if archive_members:
+                conn.executemany(
+                    """INSERT OR REPLACE INTO scan_archive_members
+                       (session_id,container_path,member_path,archive_format,
+                        status,reason,bytes_read,depth,checks_json)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    [
+                        (session_id, str(path), row.member_path,
+                         row.archive_format, row.status, row.reason[:500],
+                         max(0, int(row.bytes_read)), max(1, int(row.depth)),
+                         json.dumps(row.checks, ensure_ascii=False))
+                        for row in archive_members
+                    ],
+                )
+
+            if file_identity is not None:
+                identity = file_identity
+                conn.execute(
+                    """INSERT OR REPLACE INTO scan_file_identities
+                       (session_id,target_path,status,sha256,file_size,bytes_read,
+                        elapsed_seconds,reason,observed_at)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (session_id, str(path), identity.status, identity.sha256[:64],
+                     identity.file_size, max(0, identity.bytes_read),
+                     max(0.0, identity.elapsed_seconds), identity.reason[:500],
+                     utc_now()),
+                )
+
+            if system_observation is not None:
+                row = system_observation
+                conn.execute(
+                    """INSERT OR REPLACE INTO scan_system_observations
+                       (session_id,target_path,kind,status,executable_path,
+                        normalized_executable,pid,create_time,source_entry,
+                        source_type,command_sha256,note,observed_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (session_id, str(path), row.kind, row.status,
+                     row.executable_path[:2048], row.normalized_executable[:2048],
+                     row.pid, row.create_time, row.source_entry[:1024],
+                     row.source_type[:40], row.command_sha256[:64],
+                     row.note[:500], utc_now()),
+                )
+
+    def get_file_identities(
+        self, session_id: str, *, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Read bounded, session-specific content observations."""
+        maximum = max(1, min(int(limit), 2000))
+        with self.connection() as conn:
+            return [dict(row) for row in conn.execute(
+                """SELECT target_path,status,sha256,file_size,bytes_read,
+                          elapsed_seconds,reason,observed_at
+                   FROM scan_file_identities WHERE session_id=?
+                   ORDER BY target_path LIMIT ?""",
+                (session_id, maximum),
+            ).fetchall()]
+
+    def get_system_observations(
+        self, session_id: str, *, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Read bounded identity metadata, not raw autostart command lines."""
+        maximum = max(1, min(int(limit), 2000))
+        with self.connection() as conn:
+            return [dict(row) for row in conn.execute(
+                """SELECT target_path,kind,status,executable_path,pid,
+                          create_time,source_entry,source_type,command_sha256,
+                          note,observed_at FROM scan_system_observations
+                   WHERE session_id=? ORDER BY kind,target_path LIMIT ?""",
+                (session_id, maximum),
+            ).fetchall()]
+
+    def get_archive_members(
+        self, session_id: str, container: Path | str, *, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Return a bounded local-only view of member coverage evidence."""
+        maximum = max(1, min(int(limit), 1000))
+        with self.connection() as conn:
+            rows = conn.execute(
+                """SELECT member_path,archive_format,status,reason,
+                          bytes_read,depth,checks_json
+                   FROM scan_archive_members
+                   WHERE session_id=? AND container_path=?
+                   ORDER BY depth, member_path LIMIT ?""",
+                (session_id, str(container), maximum),
+            ).fetchall()
+        return [
+            {**dict(row), "checks": json.loads(row["checks_json"])}
+            for row in rows
+        ]
 
     def get_target_engine_runs(
         self, session_id: str, path: Path | str

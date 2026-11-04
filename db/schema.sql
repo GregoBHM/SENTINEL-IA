@@ -169,3 +169,65 @@ CREATE TABLE IF NOT EXISTS scan_target_engines (
 );
 CREATE INDEX IF NOT EXISTS ix_target_engine_by_session
     ON scan_target_engines(session_id, target_path);
+
+
+-- Read-only per-member coverage, not a malware verdict. Stored only locally.
+-- Empty/no signal is never equivalent to "clean"; 7z metadata is uninspected.
+CREATE TABLE IF NOT EXISTS scan_archive_members (
+    session_id TEXT NOT NULL REFERENCES scan_sessions(id),
+    container_path TEXT NOT NULL,
+    member_path TEXT NOT NULL,
+    archive_format TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+        status IN ('inspected', 'partial', 'uninspected')
+    ),
+    reason TEXT NOT NULL DEFAULT '',
+    bytes_read INTEGER NOT NULL DEFAULT 0,
+    depth INTEGER NOT NULL DEFAULT 1,
+    checks_json TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY(session_id, container_path, member_path)
+);
+CREATE INDEX IF NOT EXISTS ix_archive_members_container
+    ON scan_archive_members(session_id, container_path);
+
+
+-- Local-only evidence for system objects; not a malware verdict.
+-- A PID can be reused; identity requires a creation-time match at observation.
+-- Startup commands are fingerprinted, not stored in plaintext.
+CREATE TABLE IF NOT EXISTS scan_system_observations (
+    session_id TEXT NOT NULL REFERENCES scan_sessions(id),
+    target_path TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('process','persistence')),
+    status TEXT NOT NULL CHECK (status IN
+        ('verified','stale','incomplete','unavailable','reference_only','ambiguous')),
+    executable_path TEXT NOT NULL DEFAULT '',
+    normalized_executable TEXT NOT NULL DEFAULT '',
+    pid INTEGER,
+    create_time REAL,
+    source_entry TEXT NOT NULL DEFAULT '',
+    source_type TEXT NOT NULL DEFAULT '',
+    command_sha256 TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY(session_id, target_path)
+);
+CREATE INDEX IF NOT EXISTS ix_system_observations_correlation
+    ON scan_system_observations(session_id, normalized_executable, kind, status);
+
+
+-- Phase 3D.3: local bounded content identity evidence, not a malware verdict.
+CREATE TABLE IF NOT EXISTS scan_file_identities (
+    session_id TEXT NOT NULL REFERENCES scan_sessions(id),
+    target_path TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN
+        ('observed','limited','changed','unsupported','unavailable')),
+    sha256 TEXT NOT NULL DEFAULT '',
+    file_size INTEGER,
+    bytes_read INTEGER NOT NULL DEFAULT 0,
+    elapsed_seconds REAL NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY(session_id, target_path)
+);
+CREATE INDEX IF NOT EXISTS ix_file_identity_session_status
+    ON scan_file_identities(session_id, status);

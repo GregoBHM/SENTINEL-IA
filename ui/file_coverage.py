@@ -68,6 +68,10 @@ class FileCoverageDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table, 1)
+        self.members_button = QPushButton("Ver contenido comprimido")
+        self.members_button.setEnabled(False)
+        self.members_button.clicked.connect(self.show_archive_members)
+        layout.addWidget(self.members_button)
         self.status = QLabel(
             "0 señales no demuestra que el archivo sea seguro. "
             "El contenido de comprimidos puede tener evidencias propias."
@@ -82,6 +86,62 @@ class FileCoverageDialog(QDialog):
             # after addItems on Windows Qt; explicitly select the first record.
             self.selector.setCurrentIndex(0)
             self.populate_for_path()
+
+    def show_archive_members(self) -> None:
+        """Show real member coverage from the same local scan; never rescan."""
+        container = self.selector.currentText().strip()
+        try:
+            members = self.store.get_archive_members(
+                self.session_id, container, limit=500,
+            ) if container else []
+        except (sqlite3.Error, OSError):
+            members = []
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Contenido comprimido · cobertura por miembro")
+        dialog.resize(1080, 540)
+        layout = QVBoxLayout(dialog)
+        notice = QLabel(
+            "Inspeccionado significa que se ejecutaron comprobaciones compatibles, "
+            "no que el archivo esté libre de malware. Los archivos cifrados, "
+            "demasiado grandes y los 7z pendientes aparecen como no inspeccionados."
+        )
+        notice.setWordWrap(True)
+        layout.addWidget(notice)
+        table = QTableWidget(len(members), 6)
+        table.setHorizontalHeaderLabels([
+            "Miembro / ruta", "Formato", "Cobertura", "Prof.", "Comprobaciones", "Motivo",
+        ])
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        states = {
+            "inspected": "Inspeccionado",
+            "partial": "Parcial",
+            "uninspected": "No inspeccionado",
+        }
+        for index, member in enumerate(members):
+            values = (
+                str(member["member_path"]),
+                str(member["archive_format"]),
+                states.get(str(member["status"]), "Desconocido"),
+                str(member["depth"]),
+                ", ".join(member["checks"]),
+                str(member["reason"]),
+            )
+            for column, value in enumerate(values):
+                table.setItem(index, column, QTableWidgetItem(value))
+        layout.addWidget(table)
+        message = QLabel(
+            "Se muestran hasta 500 registros locales. Un inventario truncado o "
+            "parcial no permite afirmar que todos los contenidos fueron inspeccionados."
+        )
+        message.setWordWrap(True)
+        layout.addWidget(message)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def populate_for_path(self) -> None:
         """Read an exact target path, never globbing or scanning arbitrary files."""
@@ -102,6 +162,13 @@ class FileCoverageDialog(QDialog):
             )
             for col, value in enumerate(values):
                 self.table.setItem(index, col, QTableWidgetItem(value))
+        try:
+            self.members_button.setEnabled(
+                bool(self.store.get_archive_members(self.session_id, target, limit=1))
+                if target else False
+            )
+        except (sqlite3.Error, OSError):
+            self.members_button.setEnabled(False)
         if not rows:
             self.status.setText(
                 "No hay resultados por motor para esta ruta o esta sesión es anterior "

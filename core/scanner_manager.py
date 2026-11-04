@@ -14,6 +14,7 @@ from uuid import uuid4
 from app.config import ScanConfig
 from core.aggregator import FindingAggregator
 from core.archive_members import ArchiveMemberCoverage
+from core.system_identity import SystemObservation
 from core.detection_engine import DetectionEngine
 from core.errors import ScanSkipped
 from core.event_bus import EventBus
@@ -42,6 +43,7 @@ class TargetOutcome:
     input_size_bytes: int = 0
     engine_timings: list[EngineTiming] = field(default_factory=list)
     archive_members: list[ArchiveMemberCoverage] = field(default_factory=list)
+    system_observation: SystemObservation | None = None
 
 
 def discover_files(
@@ -209,9 +211,23 @@ class ScannerManager:
                     reason = "El tipo de objetivo no corresponde a este motor"
                     continue
                 detailed_scan = getattr(engine, "scan_with_coverage", None)
+                observed_scan = getattr(engine, "scan_with_observation", None)
                 if callable(detailed_scan):
                     signals, members = detailed_scan(target)
                     outcome.archive_members.extend(members)
+                elif callable(observed_scan):
+                    signals, observation = observed_scan(target)
+                    outcome.system_observation = observation
+                    if target.kind == "process" and observation.status != "verified":
+                        # Stale/reused/unreadable PIDs are unknown, never clean.
+                        state = "skipped"
+                        reason = observation.note
+                        outcome.skips.append(f"{engine.name}: {reason}")
+                        outcome.skip_details.append({
+                            "engine": engine.name,
+                            "code": "SCAN.ENGINE.SKIPPED",
+                            "params": {"reason": observation.status},
+                        })
                 else:
                     signals = engine.scan(target)
                 outcome.signals.extend(signals)
@@ -220,7 +236,8 @@ class ScannerManager:
                 signal_count = sum(
                     not finding.details.get("limitation") for finding in signals
                 )
-                outcome.succeeded += 1
+                if state == "success":
+                    outcome.succeeded += 1
             except ScanSkipped as exc:
                 state = "skipped"
                 reason = str(exc)
@@ -370,12 +387,16 @@ class ScannerManager:
                 timings=outcome.engine_timings,
             )
             status = "scanned"
-            if outcome.errors or outcome.skips or any(
+            if outcome.errors:
+                status = "partial" if outcome.succeeded else "error"
+            elif outcome.skips or any(
                 item.details.get("limitation") for item in outcome.signals
             ) or any(
                 member.status != "inspected" for member in outcome.archive_members
             ):
-                status = "partial" if outcome.succeeded else "error"
+                # A known coverage omission is not an unexpected engine error,
+                # even if no other engine was applicable to the target.
+                status = "partial"
             if not outcome.succeeded and all(
                 item.status in ("not_applicable", "not_run")
                 for item in outcome.engine_timings
@@ -386,6 +407,7 @@ class ScannerManager:
                 outcome.engine_timings, outcome.sha256,
                 "; ".join(outcome.errors + outcome.skips) or None,
                 archive_members=outcome.archive_members,
+                system_observation=outcome.system_observation,
             )
             # Archive members may be unavailable even when the ArchiveEngine
             # itself returned normally. Emit one grouped coverage notice per

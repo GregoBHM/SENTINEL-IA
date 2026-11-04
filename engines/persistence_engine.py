@@ -15,6 +15,7 @@ from core.aggregator import severity_from_score
 from core.detection_engine import DetectionEngine
 from core.heuristics import has_misleading_extension, risky_user_location, system_filename_spoof
 from core.models import Finding, ScanTarget
+from core.system_identity import SystemObservation, observe_autostart_reference
 
 try:
     import winreg
@@ -133,6 +134,17 @@ class PersistenceEngine(DetectionEngine):
     def applies_to(self, target: ScanTarget, file_header: bytes | None = None) -> bool:
         """This engine inspects autorun inventory records only."""
         return target.kind == "persistence"
+
+    def scan_with_observation(
+        self, target: ScanTarget
+    ) -> tuple[list[Finding], SystemObservation]:
+        """Capture a command fingerprint without persisting raw arguments.
+
+        Ambiguous commands are still assessed by existing heuristics but are
+        excluded from automatic process identity matching.
+        """
+        observation = observe_autostart_reference(target)
+        return self.scan(target), observation
 
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Identify suspicious path and masquerading combinations in autostarts."""

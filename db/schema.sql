@@ -189,3 +189,27 @@ CREATE TABLE IF NOT EXISTS scan_archive_members (
 );
 CREATE INDEX IF NOT EXISTS ix_archive_members_container
     ON scan_archive_members(session_id, container_path);
+
+
+-- Local-only evidence for system objects; not a malware verdict.
+-- A PID can be reused; identity requires a creation-time match at observation.
+-- Startup commands are fingerprinted, not stored in plaintext.
+CREATE TABLE IF NOT EXISTS scan_system_observations (
+    session_id TEXT NOT NULL REFERENCES scan_sessions(id),
+    target_path TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('process','persistence')),
+    status TEXT NOT NULL CHECK (status IN
+        ('verified','stale','incomplete','unavailable','reference_only','ambiguous')),
+    executable_path TEXT NOT NULL DEFAULT '',
+    normalized_executable TEXT NOT NULL DEFAULT '',
+    pid INTEGER,
+    create_time REAL,
+    source_entry TEXT NOT NULL DEFAULT '',
+    source_type TEXT NOT NULL DEFAULT '',
+    command_sha256 TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY(session_id, target_path)
+);
+CREATE INDEX IF NOT EXISTS ix_system_observations_correlation
+    ON scan_system_observations(session_id, normalized_executable, kind, status);

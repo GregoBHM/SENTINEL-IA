@@ -13,6 +13,7 @@ from typing import Any, Iterator
 from core.models import AggregatedFinding, FileHashes, ScanSummary
 from core.performance import EngineTiming
 from core.archive_members import ArchiveMemberCoverage
+from core.system_identity import SystemObservation
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -144,6 +145,7 @@ class SQLiteStore:
         timings: list[EngineTiming], sha256: str | None = None,
         error: str | None = None,
         archive_members: list[ArchiveMemberCoverage] | None = None,
+        system_observation: SystemObservation | None = None,
     ) -> None:
         """Persist target, motors and archive members in one local transaction.
 
@@ -183,6 +185,35 @@ class SQLiteStore:
                         for row in archive_members
                     ],
                 )
+
+            if system_observation is not None:
+                row = system_observation
+                conn.execute(
+                    """INSERT OR REPLACE INTO scan_system_observations
+                       (session_id,target_path,kind,status,executable_path,
+                        normalized_executable,pid,create_time,source_entry,
+                        source_type,command_sha256,note,observed_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (session_id, str(path), row.kind, row.status,
+                     row.executable_path[:2048], row.normalized_executable[:2048],
+                     row.pid, row.create_time, row.source_entry[:1024],
+                     row.source_type[:40], row.command_sha256[:64],
+                     row.note[:500], utc_now()),
+                )
+
+    def get_system_observations(
+        self, session_id: str, *, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Read bounded identity metadata, not raw autostart command lines."""
+        maximum = max(1, min(int(limit), 2000))
+        with self.connection() as conn:
+            return [dict(row) for row in conn.execute(
+                """SELECT target_path,kind,status,executable_path,pid,
+                          create_time,source_entry,source_type,command_sha256,
+                          note,observed_at FROM scan_system_observations
+                   WHERE session_id=? ORDER BY kind,target_path LIMIT ?""",
+                (session_id, maximum),
+            ).fetchall()]
 
     def get_archive_members(
         self, session_id: str, container: Path | str, *, limit: int = 500

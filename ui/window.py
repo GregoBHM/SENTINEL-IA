@@ -44,6 +44,7 @@ from ui.repository import FindingRow, HistoryRepository
 from ui.theme import COLORS, severity_color
 from ui.scan_messages import explain_scan_error
 from ui.file_coverage import FileCoverageDialog
+from ui.evidence_trace import EvidenceTraceDialog
 from ui.profiles import ScanPlan
 from ui.wizard import ConsentWizard
 
@@ -597,6 +598,9 @@ class OneGuardWindow(QMainWindow):
         self.investigation_text.setPlainText(
             "Aún no hay un análisis investigable. Completa un análisis y se mostrarán "
             "las relaciones encontradas, prioridades de revisión y limitaciones.")
+        self.evidence_trace_button = QPushButton("Explorar relaciones y evidencias locales")
+        self.evidence_trace_button.clicked.connect(self.show_evidence_trace)
+        column.addWidget(self.evidence_trace_button)
         column.addWidget(self.investigation_text, 1)
         column.addWidget(label(
             "Fase 5: tras aplicar una acción, ejecuta un análisis nuevo para verificar resultados. "
@@ -1332,6 +1336,24 @@ class OneGuardWindow(QMainWindow):
         ])
         self.detail.setPlainText("\n".join(output))
 
+    def show_evidence_trace(self) -> None:
+        """Open provenance-backed relationships for the selected scan session."""
+        session = self._display_session_id or self.session_id
+        if not session:
+            QMessageBox.information(
+                self, "Investigación",
+                "Completa un análisis o selecciona una sesión desde Historial."
+            )
+            return
+        try:
+            store = SQLiteStore(self.config.database_path)
+            EvidenceTraceDialog(store, session, self).exec()
+        except (sqlite3.Error, OSError, ValueError) as exc:
+            QMessageBox.warning(
+                self, "Investigación",
+                f"No se pudieron consultar las evidencias: {type(exc).__name__}"
+            )
+
     def _render_investigation(self, report: dict) -> None:
         """Render only actual correlations and explicit evidence limitations."""
         links = report.get("links", [])
@@ -1461,6 +1483,12 @@ class OneGuardWindow(QMainWindow):
         self._display_session_id = session_id
         self._show_rows(rows)
         self.results_caption.setText(f"Historial · {session_id[:12]} · {len(rows)} hallazgos visibles")
+        self.investigation_text.setPlainText(
+            f"Sesión histórica {session_id[:12]}. "
+            "Para revisar relaciones respaldadas por la base local, "
+            "selecciona «Explorar relaciones y evidencias locales». "
+            "No se reconstruyen cadenas causales a partir de datos ausentes."
+        )
         self._switch_page(2)
 
     def _setup_quarantine(self) -> None:

@@ -215,7 +215,11 @@ class ScannerManager:
                 else:
                     signals = engine.scan(target)
                 outcome.signals.extend(signals)
-                signal_count = len(signals)
+                # Coverage warnings are not detection signals; do not inflate
+                # the dashboard's per-engine "Señales" counter.
+                signal_count = sum(
+                    not finding.details.get("limitation") for finding in signals
+                )
                 outcome.succeeded += 1
             except ScanSkipped as exc:
                 state = "skipped"

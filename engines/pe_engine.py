@@ -43,9 +43,25 @@ class PEEngine(DetectionEngine):
         """Set an upper bound on PE parsing and sampled section buffers."""
         self.max_file_size = max_file_size
 
+    def applies_to(self, target: ScanTarget, file_header: bytes | None = None) -> bool:
+        """Recognize PE magic even for renamed executables.
+
+        When header bytes are unavailable the extension is a conservative
+        fallback; inaccessible files are reported through normal scan errors.
+        """
+        return target.kind == "file" and (
+            (file_header is not None and file_header.startswith(b"MZ"))
+            or target.path.suffix.lower() in _PE_SUFFIXES
+        )
+
     def scan(self, target: ScanTarget) -> list[Finding]:
         """Inspect selected PE-like files and Authenticode trust status."""
-        if target.kind != "file" or target.path.suffix.lower() not in _PE_SUFFIXES:
+        if target.kind != "file":
+            return []
+        # Direct scan callers also support renamed executables.
+        with target.path.open("rb") as handle:
+            magic = handle.read(2)
+        if magic != b"MZ":
             return []
         if pefile is None:
             raise ScanSkipped("Análisis PE requiere instalar pefile")
@@ -53,8 +69,10 @@ class PEEngine(DetectionEngine):
             raise ScanSkipped("Archivo PE excede el tamaño máximo")
         try:
             pe = pefile.PE(str(target.path), fast_load=True)
-        except pefile.PEFormatError:
-            return []
+        except pefile.PEFormatError as exc:
+            raise ScanSkipped(
+                "Cabecera PE inválida; inspección estructural incompleta"
+            ) from exc
         try:
             return self._evaluate(pe, str(target.path), verify_authenticode(target.path))
         finally:

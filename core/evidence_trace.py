@@ -163,6 +163,56 @@ def read_evidence_trace(
                 row["detail"], "coverage",
             )
 
+        # A relation is justified only by a verified PID + creation time and
+        # a direct, unambiguous configured executable reference at this scan.
+        # Equal paths do NOT establish who launched the process.
+        system_links = conn.execute(
+            """SELECT p.target_path AS process_target, p.pid, p.create_time,
+                      p.observed_at, p.executable_path,
+                      a.target_path AS autorun_target, a.source_entry,
+                      a.source_type, a.observed_at AS autorun_observed_at
+               FROM scan_system_observations p
+               JOIN scan_system_observations a
+                 ON p.session_id=a.session_id
+                AND p.normalized_executable=a.normalized_executable
+               WHERE p.session_id=? AND p.kind='process'
+                 AND p.status='verified' AND p.pid IS NOT NULL
+                 AND p.create_time IS NOT NULL
+                 AND a.kind='persistence' AND a.status='reference_only'
+                 AND p.normalized_executable!=''
+               ORDER BY p.target_path,a.target_path LIMIT ?""",
+            (session_id, maximum + 1),
+        ).fetchall()
+        truncated |= len(system_links) > maximum
+        for row in system_links[:maximum]:
+            add(
+                row["source_entry"] or row["autorun_target"],
+                "Ruta coincidente con proceso observado",
+                row["process_target"],
+                f"PID {row['pid']} · creación {row['create_time']} · "
+                f"ejecutable {row['executable_path']} · "
+                f"origen {row['source_type']} · instantánea {row['observed_at']}. "
+                "No demuestra que esta entrada iniciara el proceso.",
+                "system_link",
+            )
+
+        # Incomplete identity is a coverage limit, not evidence of maliciousness.
+        incomplete_system = conn.execute(
+            """SELECT target_path,kind,status,note FROM scan_system_observations
+               WHERE session_id=? AND status IN (
+                 'stale','unavailable','incomplete','ambiguous'
+               ) ORDER BY target_path LIMIT ?""",
+            (session_id, min(maximum, 60) + 1),
+        ).fetchall()
+        truncated |= len(incomplete_system) > min(maximum, 60)
+        for row in incomplete_system[:min(maximum, 60)]:
+            add(
+                row["target_path"], "Identidad o comando no correlacionable",
+                f"{row['kind']} · {row['status']}",
+                row["note"] or "No hay una identidad fiable disponible",
+                "identity_limit",
+            )
+
         # An identical content hash is a demonstrable relation, but never a
         # claim of propagation or related infection. Keep only bounded pairs.
         hashes = conn.execute(
@@ -196,6 +246,7 @@ def read_evidence_trace(
         (
             "Las relaciones proceden de una sesión local y no prueban causalidad.",
             "Una ruta declarada por un sensor no confirma ejecución actual ni el punto de entrada.",
+            "Una ruta coincidente entre inicio y proceso no demuestra que el inicio lo haya ejecutado.",
             "Ausencia de hallazgos no demuestra equipo limpio; revisar omisiones y motores no disponibles.",
             "La lista está limitada para proteger la interfaz; puede omitir relaciones adicionales.",
         ),

@@ -43,6 +43,7 @@ from ui.controller import ScanController
 from ui.repository import FindingRow, HistoryRepository
 from ui.theme import COLORS, severity_color
 from ui.scan_messages import explain_scan_error
+from ui.file_coverage import FileCoverageDialog
 from ui.profiles import ScanPlan
 from ui.wizard import ConsentWizard
 
@@ -1022,6 +1023,16 @@ class OneGuardWindow(QMainWindow):
         controls.rejected.connect(dialog.reject)
         layout.addWidget(controls)
         dialog.exec()
+
+    def show_file_coverage(self) -> None:
+        """Allow reviewing real motor outcomes for a completed target in this session."""
+        if not self.session_id:
+            QMessageBox.information(
+                self, "Inspección por archivo", "Primero inicia un análisis."
+            )
+            return
+        store = SQLiteStore(self.config.database_path)
+        FileCoverageDialog(store, self.session_id, self).exec()
 
     def _record_coverage(self, event: ScanEvent) -> None:
         """Count partial checks while avoiding repeated console messages."""

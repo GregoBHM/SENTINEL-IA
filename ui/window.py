@@ -205,6 +205,8 @@ class OneGuardWindow(QMainWindow):
         self.controller = ScanController(self.config)
         self.scan_clock = ScanClock()
         self._last_clock_refresh = 0.0
+        self._latest_performance: dict | None = None
+        self._engine_inventory: dict[str, dict[str, str]] = {}
         self._phase_started_at = monotonic()
         self._phase_finished_at: float | None = None
         self.session_id: str | None = None
@@ -405,6 +407,18 @@ class OneGuardWindow(QMainWindow):
         timing.addStretch()
         timing.addWidget(self.rate_label)
         work_layout.addLayout(timing)
+        self.eta_label = label("Tiempo restante · recopilando mediciones", "SmallHelp")
+        work_layout.addWidget(self.eta_label)
+        self.resources_label = label("Recursos · recopilando datos", "SmallHelp")
+        self.pending_label = label("Objetivos pendientes · sin inventario completo", "SmallHelp")
+        work_layout.addWidget(self.resources_label)
+        work_layout.addWidget(self.pending_label)
+        self.engine_perf_button = QPushButton("Estado y rendimiento de motores")
+        self.engine_perf_button.setEnabled(False)
+        self.engine_perf_button.clicked.connect(self.show_engine_performance)
+        work_layout.addWidget(self.engine_perf_button)
+        self.engine_status_label = label("Motores · preparando inventario", "SmallHelp")
+        work_layout.addWidget(self.engine_status_label)
         self.phase_time_label = label("Fase en curso  00:00")
         work_layout.addWidget(self.phase_time_label)
         self.global_label = label("Progreso global · aún no disponible")
@@ -602,9 +616,15 @@ class OneGuardWindow(QMainWindow):
         self.history_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.history_table.doubleClicked.connect(self.open_historical_scan)
         column.addWidget(self.history_table, 1)
+        buttons = QHBoxLayout()
         reload_button = QPushButton("Actualizar historial")
         reload_button.clicked.connect(self.refresh_history)
-        column.addWidget(reload_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        buttons.addWidget(reload_button)
+        timing_button = QPushButton("Ver rendimiento de sesión")
+        timing_button.clicked.connect(self.show_historical_performance)
+        buttons.addWidget(timing_button)
+        buttons.addStretch()
+        column.addLayout(buttons)
         column.addWidget(label("Puedes exportar informes HTML/CSV desde Hallazgos tras abrir una sesión."))
         self.pages.removeWidget(self.pages.widget(4))
         self.pages.insertWidget(4, page)
@@ -732,6 +752,13 @@ class OneGuardWindow(QMainWindow):
         self.phase_progress.setValue(0)
         self.global_label.setText("Descubriendo objetivos · tiempo restante no estimable")
         self.scan_clock.reset()
+        self._latest_performance = None
+        self._engine_inventory.clear()
+        self.engine_perf_button.setEnabled(False)
+        self.engine_status_label.setText("Motores · preparando inventario")
+        self.eta_label.setText("Tiempo restante · recopilando mediciones")
+        self.resources_label.setText("Recursos · recopilando datos")
+        self.pending_label.setText("Objetivos pendientes · sin inventario completo")
         self._last_clock_refresh = 0.0
         self.elapsed_label.setText("Transcurrido  00:00")
         self.rate_label.setText("Ritmo observado  — archivos/s")
@@ -823,16 +850,166 @@ class OneGuardWindow(QMainWindow):
             + (f" · pausa {format_duration(observed.paused_seconds)}"
                if observed.paused_seconds > 0 else "")
         )
-        self.rate_label.setText(
-            f"Ritmo observado  {observed.files_per_second:.1f} archivos/s"
-            if observed.active_seconds >= 1.0 else
-            "Ritmo observado  calculando…"
-        )
+        # Prefer the scanner's measured target throughput once available.
+        if self._latest_performance is None:
+            self.rate_label.setText(
+                f"Ritmo observado  {observed.files_per_second:.1f} archivos/s"
+                if observed.active_seconds >= 1.0 else
+                "Ritmo observado  calculando…"
+            )
         phase_end = self._phase_finished_at if self._phase_finished_at is not None else now
         phase_elapsed = max(0.0, phase_end - self._phase_started_at)
         self.phase_time_label.setText(
             f"Fase en curso  {format_duration(phase_elapsed)}"
         )
+
+    def _render_performance(self, data: dict) -> None:
+        """Display observed rates and an explicitly scoped time estimate."""
+        self._latest_performance = data
+        engines = data.get("engines") or {}
+        self.engine_perf_button.setEnabled(bool(engines) or bool(self._engine_inventory))
+        resources = data.get("process_resources") or {}
+        if resources:
+            cpu = float(resources.get("cpu_percent", 0.0))
+            ram = int(resources.get("rss_bytes", 0)) / (1024 * 1024)
+            self.resources_label.setText(
+                f"Este proceso · CPU {cpu:.1f}% · memoria RAM {ram:.0f} MiB"
+            )
+        else:
+            self.resources_label.setText("Recursos · no disponibles")
+        pending = max(0, int(data.get("remaining_known", 0)))
+        discovery = bool(data.get("discovery_complete", False))
+        self.pending_label.setText(
+            f"Objetivos conocidos pendientes · {pending:,}"
+            .replace(",", ".") +
+            ("" if discovery else " · inventario en curso")
+        )
+        speed = float(data.get("throughput_targets_per_second", 0.0))
+        self.rate_label.setText(
+            f"Ritmo observado  {speed:.1f} objetivos/s" if speed > 0
+            else "Ritmo observado  calculando…"
+        )
+        eta = data.get("eta")
+        if data.get("paused"):
+            self.eta_label.setText("Tiempo restante · análisis en pausa")
+        elif not isinstance(eta, dict):
+            self.eta_label.setText(
+                "Tiempo restante · recopilando mediciones"
+                if not data.get("discovery_complete")
+                else "Tiempo restante · sin estimación fiable"
+            )
+        else:
+            low = format_duration(float(eta.get("low_seconds", 0)))
+            high = format_duration(float(eta.get("high_seconds", 0)))
+            if eta.get("scope") == "known":
+                self.eta_label.setText(
+                    f"Cola conocida: ~{low}–{high} · aún se descubren objetivos"
+                )
+            else:
+                self.eta_label.setText(
+                    f"Tiempo restante orientativo: {low}–{high}"
+                )
+
+    def _render_engine_inventory(self, rows: list[dict]) -> None:
+        """Show which engines were prepared, unavailable or not requested."""
+        self._engine_inventory = {
+            str(row["id"]): dict(row)
+            for row in rows
+            if isinstance(row, dict) and row.get("id")
+        }
+        prepared = sum(
+            row.get("state") == "prepared"
+            for row in self._engine_inventory.values()
+        )
+        partial = sum(
+            row.get("state") in ("partial", "unavailable")
+            for row in self._engine_inventory.values()
+        )
+        self.engine_status_label.setText(
+            f"Motores · {prepared} preparados · {partial} limitados/no disponibles"
+        )
+        self.engine_perf_button.setEnabled(bool(self._engine_inventory))
+
+    def show_engine_performance(self) -> None:
+        """Open the current session inventory alongside observed measurements."""
+        self._open_engine_metrics(
+            (self._latest_performance or {}).get("engines") or {},
+            self._engine_inventory,
+        )
+
+    def _open_engine_metrics(
+        self, engines: dict, inventory: dict[str, dict[str, str]] | None = None,
+    ) -> None:
+        """Display engine state and actual invocations without claiming full coverage."""
+        inventory = inventory or {}
+        names = list(dict.fromkeys([*inventory.keys(), *engines.keys()]))
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Motores · estado y rendimiento")
+        dialog.resize(1100, 560)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(label(
+            "Preparado no significa cobertura completa. Las invocaciones "
+            "finalizadas pueden corresponder a objetivos no aplicables; "
+            "las señales emitidas no son infecciones confirmadas."
+        ))
+        table = QTableWidget(len(names), 8)
+        table.setHorizontalHeaderLabels([
+            "Motor", "Estado", "Invocaciones", "Finalizadas", "Omitidas",
+            "Errores", "Señales", "Tiempo acumulado",
+        ])
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
+        table.horizontalHeader().setStretchLastSection(True)
+        states = {
+            "prepared": "Preparado",
+            "partial": "Inventario parcial",
+            "unavailable": "No disponible",
+            "not_requested": "No solicitado",
+        }
+        for row_idx, name in enumerate(names):
+            info = inventory.get(name, {})
+            metrics = engines.get(name, {})
+            checks = int(metrics.get("checks", 0))
+            errors = int(metrics.get("errors", 0))
+            skipped = int(metrics.get("skipped", 0))
+            state = states.get(info.get("state", ""), "Sin inventario")
+            if info.get("state") == "prepared" and checks > 0:
+                state = "Con errores" if errors else (
+                    "Con omisiones" if skipped else "Invocado"
+                )
+            title = str(info.get("title") or name)
+            values = (
+                title, state, str(checks) if checks else "—",
+                str(int(metrics.get("completed", 0))) if checks else "—",
+                str(skipped) if checks else "—",
+                str(errors) if checks else "—",
+                str(int(metrics.get("signals", 0))) if checks else "—",
+                f"{float(metrics.get('duration_seconds', 0)):.2f} s"
+                if checks else "—",
+            )
+            for col_idx, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setToolTip(
+                    str(info.get("note") or "Invocaciones medidas; sin inventario.")
+                )
+                table.setItem(row_idx, col_idx, cell)
+        layout.addWidget(table)
+        layout.addWidget(label(
+            "Consulta «Ver omisiones» en la pantalla de análisis para conocer "
+            "los archivos afectados y sus motivos. Los tiempos acumulados de "
+            "motores paralelos no equivalen al tiempo total de la sesión."
+        ))
+        controls = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        controls.rejected.connect(dialog.reject)
+        layout.addWidget(controls)
+        dialog.exec()
 
     def _record_coverage(self, event: ScanEvent) -> None:
         """Count partial checks while avoiding repeated console messages."""
@@ -933,6 +1110,10 @@ class OneGuardWindow(QMainWindow):
                 self.failure_hint.setText(explain_scan_error(message))
                 self.failure_hint.setVisible(True)
             self._log("ERROR", message)
+        elif kind == "engine_inventory":
+            self._render_engine_inventory(payload.get("engines") or [])
+        elif kind == "performance":
+            self._render_performance(payload)
         elif kind == "progress":
             done = int(payload.get("scanned", 0)) + int(payload.get("system_scanned", 0))
             known = int(payload.get("discovered", 0)) + int(payload.get("system_scanned", 0))
@@ -947,13 +1128,16 @@ class OneGuardWindow(QMainWindow):
             self.phase_progress.setValue(min(99, round(done / known * 100)) if known else 0)
         elif kind == "paused":
             self.scan_clock.pause()
+            self.eta_label.setText("Tiempo restante · en pausa")
             self.scan_status.setText("Pausado (trabajos en curso pueden finalizar)")
             self._log("WARN", "Pausa cooperativa solicitada")
         elif kind == "resumed":
             self.scan_clock.resume()
+            self.eta_label.setText("Tiempo restante · recalculando")
             self.scan_status.setText("Analizando")
             self._log("INFO", "Análisis reanudado")
         elif kind == "cancelling":
+            self.eta_label.setText("Tiempo restante · cancelación en curso")
             self.scan_status.setText("Cancelando operaciones")
         elif kind == "complete":
             self._complete(payload)
@@ -980,6 +1164,13 @@ class OneGuardWindow(QMainWindow):
         self.scan_clock.finish()
         self._phase_finished_at = monotonic()
         self._update_scan_metrics(force=True)
+        if isinstance(payload.get("performance"), dict):
+            self._render_performance(payload["performance"])
+        self.eta_label.setText(
+            "Tiempo restante · análisis finalizado"
+            if payload.get("status") == "completed" else
+            "Tiempo restante · análisis interrumpido"
+        )
         self._display_session_id = self.session_id
         status = str(payload.get("status", "failed"))
         self.global_progress.setRange(0, 100)
@@ -1182,6 +1373,33 @@ class OneGuardWindow(QMainWindow):
                 item = QTableWidgetItem(value)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.history_table.setItem(row_index, column, item)
+
+    def show_historical_performance(self) -> None:
+        """Inspect saved engine performance without re-running any scan."""
+        index = self.history_table.currentRow()
+        record = self.history_table.item(index, 6) if index >= 0 else None
+        if record is None:
+            QMessageBox.information(
+                self, "Rendimiento", "Selecciona primero un análisis del historial."
+            )
+            return
+        try:
+            metrics = SQLiteStore(
+                self.config.database_path
+            ).get_engine_metrics(record.text())
+        except (sqlite3.Error, OSError):
+            QMessageBox.warning(
+                self, "Rendimiento", "No se pudo consultar la medición almacenada."
+            )
+            return
+        if not metrics:
+            QMessageBox.information(
+                self, "Rendimiento", "Esta sesión no tiene métricas por motor."
+            )
+            return
+        self._open_engine_metrics({
+            str(item["engine"]): item for item in metrics
+        }, {})
 
     def open_historical_scan(self, index: QModelIndex) -> None:
         """Inspect one previous session without re-running any detection."""

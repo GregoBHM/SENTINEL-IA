@@ -89,8 +89,10 @@ class PEEngine(DetectionEngine):
             raise ScanSkipped("PE interno excede el límite")
         try:
             pe = pefile.PE(data=data, fast_load=True)
-        except pefile.PEFormatError:
-            return []
+        except pefile.PEFormatError as exc:
+            raise ScanSkipped(
+                "PE interno inválido; no se completó la inspección estructural"
+            ) from exc
         try:
             # Authenticode verification requires an on-disk object on Windows.
             return self._evaluate(pe, label, SignatureResult("unavailable"))

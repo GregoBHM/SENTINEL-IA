@@ -154,3 +154,59 @@ def test_pe_magic_eligibility_is_independent_of_extension(tmp_path: Path) -> Non
     assert not engine.applies_to(ScanTarget(tmp_path / "fake.exe"), b"ordinary")
     assert not engine.applies_to(ScanTarget(tmp_path / "script.ps1"), b"hello")
     assert not engine.applies_to(ScanTarget(tmp_path / "p1", "process"), b"MZ")
+
+
+def test_malformed_renamed_pe_does_not_claim_completed_inspection(
+    tmp_path: Path,
+) -> None:
+    """An MZ header with no valid PE directory is a skip, never a clean result."""
+    file = tmp_path / "disguised.dat"
+    file.write_bytes(b"MZ" + b"\\x00" * 28)
+    store = SQLiteStore(tmp_path / "malformed.db")
+    summary = ScannerManager(
+        ScanConfig(database_path=store.path, max_workers=1, max_pending=1),
+        store, [PEEngine()],
+    ).run([file])
+    row = store.get_target_engine_runs(summary.session_id, file)[0]
+    assert row["state"] == "skipped"
+    assert summary.omitted_checks == 1
+    assert summary.engine_metrics["pe_static"]["completed"] == 0
+
+
+def test_cooperative_cancellation_records_engines_not_started(
+    tmp_path: Path,
+) -> None:
+    """After cancellation, later motors cannot appear as completed checks."""
+    class Canceller(DetectionEngine):
+        name = "canceller"
+        manager: ScannerManager
+
+        def scan(self, target: ScanTarget) -> list[Finding]:
+            self.manager.cancel()
+            return []
+
+    class NeverCalled(DetectionEngine):
+        name = "not_started"
+
+        def scan(self, target: ScanTarget) -> list[Finding]:
+            raise AssertionError("Cancelled engine must not run")
+
+    file = tmp_path / "cancel.txt"
+    file.write_bytes(b"harmless")
+    db = SQLiteStore(tmp_path / "cancel.db")
+    first = Canceller()
+    manager = ScannerManager(
+        ScanConfig(database_path=db.path, max_workers=1, max_pending=1),
+        db, [first, NeverCalled()],
+    )
+    first.manager = manager
+    summary = manager.run([file])
+    rows = {
+        x["engine"]: x
+        for x in db.get_target_engine_runs(summary.session_id, file)
+    }
+    assert summary.status is ScanStatus.CANCELLED
+    assert rows["canceller"]["state"] == "success"
+    assert rows["not_started"]["state"] == "not_run"
+    assert summary.engine_metrics["not_started"]["checks"] == 0
+    assert summary.engine_metrics["not_started"]["not_run"] == 1

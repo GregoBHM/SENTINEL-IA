@@ -53,3 +53,21 @@ firmas, mitigación ni interfaz. Esta fase no está completa.
 presupuesto global de I/O, eliminación de lectura duplicada con HashEngine,
 correlación explícita con PID+create_time, UI dedicada y Authenticode.
 Un estado `observed` no implica que el archivo sea benigno.
+
+## Incremento 2b — revisión de integración
+- Verificada presencia de cambios de integración en la rama remota, separados
+  del primer incremento fusionado en PR #12.
+- Lecturas incompletas de candidatos PE registran `SCAN.ENGINE.SKIPPED`,
+  incrementan omisiones y marcan cobertura parcial, **sin incrementar señales
+  de malware**.
+- Rechazo adicional de `st_file_attributes & 0x400` (Windows reparse point)
+  antes y después de lectura. El control no equivale a protección total contra
+  sustituciones concurrentes de ruta, ni protege todos los directorios padres.
+- Tests de cobertura parcial y atributo Win32 simulado incorporados.
+
+### Condiciones antes del merge
+1. CI Linux/Windows + pruebas de integración real SQLite en Windows.
+2. Confirmar comportamiento de reparse points, hardlinks y casos TOCTOU.
+3. Revisar costo de doble hashing con `HashEngine`; todavía existe.
+4. No declarar identidad confiable del archivo mapeado por un proceso.
+5. Revisión de GUI y esquema de migración con base de usuario existente.

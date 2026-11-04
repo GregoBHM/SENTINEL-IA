@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from core.models import AggregatedFinding, FileHashes, ScanSummary
+from core.performance import EngineTiming
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -38,6 +39,17 @@ class SQLiteStore:
                     "ALTER TABLE scan_sessions ADD COLUMN omitted_checks "
                     "INTEGER NOT NULL DEFAULT 0"
                 )
+            perf_columns = {
+                row["name"] for row in conn.execute(
+                    "PRAGMA table_info(scan_engine_metrics)"
+                )
+            }
+            for field in ("not_applicable", "not_run"):
+                if field not in perf_columns:
+                    conn.execute(
+                        f"ALTER TABLE scan_engine_metrics ADD COLUMN {field} "
+                        "INTEGER NOT NULL DEFAULT 0"
+                    )
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
@@ -85,15 +97,17 @@ class SQLiteStore:
             conn.executemany(
                 """INSERT OR REPLACE INTO scan_engine_metrics
                    (session_id,engine,checks,completed,skipped,errors,
-                    duration_seconds,input_size_bytes,signals)
-                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                    duration_seconds,input_size_bytes,signals,not_applicable,not_run)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 [
                     (session_id, engine, int(row.get("checks", 0)),
                      int(row.get("completed", 0)), int(row.get("skipped", 0)),
                      int(row.get("errors", 0)),
                      float(row.get("duration_seconds", 0.0)),
                      int(row.get("input_size_bytes", 0)),
-                     int(row.get("signals", 0)))
+                     int(row.get("signals", 0)),
+                     int(row.get("not_applicable", 0)),
+                     int(row.get("not_run", 0)))
                     for engine, row in metrics.items()
                 ],
             )
@@ -104,7 +118,8 @@ class SQLiteStore:
             return [
                 dict(row) for row in conn.execute(
                     """SELECT engine,checks,completed,skipped,errors,
-                              duration_seconds,input_size_bytes,signals
+                              duration_seconds,input_size_bytes,signals,
+                              not_applicable,not_run
                        FROM scan_engine_metrics WHERE session_id=?
                        ORDER BY duration_seconds DESC""",
                     (session_id,),
@@ -122,6 +137,65 @@ class SQLiteStore:
                    (session_id,target_path,status,sha256,error) VALUES(?,?,?,?,?)""",
                 (session_id, str(path), status, sha256, error),
             )
+
+    def record_target_engine_runs(
+        self, session_id: str, path: Path, status: str,
+        timings: list[EngineTiming], sha256: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Persist target and per-motor coverage in one local transaction.
+
+        Inapplicable engines are recorded explicitly, never as successful scans.
+        """
+        with self.connection() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO scan_targets
+                   (session_id,target_path,status,sha256,error) VALUES(?,?,?,?,?)""",
+                (session_id, str(path), status, sha256, error),
+            )
+            if timings:
+                conn.executemany(
+                    """INSERT OR REPLACE INTO scan_target_engines
+                       (session_id,target_path,engine,state,duration_seconds,
+                        input_size_bytes,signal_count,reason)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    [
+                        (session_id, str(path), timing.engine, timing.status,
+                         max(0.0, float(timing.duration_seconds)),
+                         max(0, int(timing.input_size_bytes)),
+                         max(0, int(timing.signal_count)), timing.reason[:500])
+                        for timing in timings
+                    ],
+                )
+
+    def get_target_engine_runs(
+        self, session_id: str, path: Path | str
+    ) -> list[dict[str, Any]]:
+        """Read the actual inspection status of each motor for one target."""
+        with self.connection() as conn:
+            return [
+                dict(row) for row in conn.execute(
+                    """SELECT engine,state,duration_seconds,input_size_bytes,
+                              signal_count,reason
+                       FROM scan_target_engines
+                       WHERE session_id=? AND target_path=?
+                       ORDER BY engine""",
+                    (session_id, str(path)),
+                ).fetchall()
+            ]
+
+    def get_recent_target_paths(self, session_id: str, limit: int = 250) -> list[str]:
+        """Get a bounded list for local GUI evidence drilldown."""
+        count = max(1, min(int(limit), 500))
+        with self.connection() as conn:
+            return [
+                str(row["target_path"])
+                for row in conn.execute(
+                    """SELECT target_path FROM scan_targets WHERE session_id=?
+                       ORDER BY rowid DESC LIMIT ?""",
+                    (session_id, count),
+                ).fetchall()
+            ]
 
     def record_coverage(
         self, session_id: str, path: Path, engine: str, code: str,

@@ -317,11 +317,17 @@ class ScannerManager:
         if target.kind == "file" and hasher is not None and outcome.succeeded:
             try:
                 if (outcome.file_identity is not None
+                        and outcome.file_identity.status == "changed"):
+                    # Do not bind an earlier detection to a NEW file digest.
+                    # Keep the event as partial; per-finding SHA (if any)
+                    # remains the hash of the bytes that produced evidence.
+                    outcome.sha256 = None
+                elif (outcome.file_identity is not None
                         and matches_current_file_identity(target.path, outcome.file_identity)):
                     outcome.sha256 = outcome.file_identity.sha256
                 else:
-                    # Metadata changed or bounded identity failed: fall back
-                    # to the existing validated hash path for the allowlist.
+                    # A limited or unavailable identity does not disable the
+                    # established hash check and its cache.
                     outcome.sha256 = hasher.compute_hashes(target.path).sha256
             except OSError as exc:
                 outcome.errors.append(f"hash verification: {type(exc).__name__}")

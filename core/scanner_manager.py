@@ -6,7 +6,7 @@ import os
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterator
 from uuid import uuid4
@@ -295,6 +295,23 @@ class ScannerManager:
                                       if state not in ("not_applicable", "not_run") else 0),
                     signal_count=signal_count, reason=reason[:500],
                 ))
+        # A digest observed earlier cannot silently represent a path that
+        # changed during subsequent engine work. Preserve this as a coverage
+        # omission and let the established hash path re-read current bytes.
+        if (outcome.file_identity is not None
+                and outcome.file_identity.status == "observed"
+                and not matches_current_file_identity(target.path, outcome.file_identity)):
+            outcome.file_identity = replace(
+                outcome.file_identity, status="changed", sha256="", md5="",
+                fingerprint=None,
+                reason="Path metadata changed after the content snapshot",
+            )
+            outcome.skips.append("file_identity: identity changed after observation")
+            outcome.skip_details.append({
+                "engine": "file_identity",
+                "code": "SCAN.ENGINE.SKIPPED",
+                "params": {"reason": "changed"},
+            })
         # Reuse the hash engine's cache for whitelist decisions on YARA-only matches.
         hasher = next((e for e in self.engines if isinstance(e, HashEngine)), None)
         if target.kind == "file" and hasher is not None and outcome.succeeded:

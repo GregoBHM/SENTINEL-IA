@@ -14,13 +14,15 @@ from uuid import uuid4
 from app.config import ScanConfig
 from core.aggregator import FindingAggregator
 from core.archive_members import ArchiveMemberCoverage
-from core.file_identity import FileIdentity, observe_file_identity
+from core.file_identity import (FileIdentity, matches_current_file_identity,
+                                observe_file_identity)
 from core.system_identity import SystemObservation
 from core.detection_engine import DetectionEngine
 from core.errors import ScanSkipped
 from core.event_bus import EventBus
 from core.events import make_event
-from core.models import AggregatedFinding, Finding, ScanEvent, ScanStatus, ScanSummary, ScanTarget
+from core.models import (AggregatedFinding, FileHashes, Finding, ScanEvent,
+                         ScanStatus, ScanSummary, ScanTarget)
 from core.performance import EngineTiming, PerformanceMonitor
 from core.quarantine import quarantine_directory
 from db.database import SQLiteStore
@@ -250,6 +252,15 @@ class ScannerManager:
                             "code": "SCAN.ENGINE.SKIPPED",
                             "params": {"reason": observation.status},
                         })
+                elif (isinstance(engine, HashEngine) and target.kind == "file"
+                      and outcome.file_identity is not None
+                      and matches_current_file_identity(target.path, outcome.file_identity)):
+                    # One validated bounded read serves both evidence and hash
+                    # detection. No persisted cache or hash-only trust shortcut.
+                    identity = outcome.file_identity
+                    signals = engine.scan_with_hashes(
+                        target, FileHashes(identity.sha256, identity.md5, identity.file_size)
+                    )
                 else:
                     signals = engine.scan(target)
                 outcome.signals.extend(signals)
@@ -288,7 +299,13 @@ class ScannerManager:
         hasher = next((e for e in self.engines if isinstance(e, HashEngine)), None)
         if target.kind == "file" and hasher is not None and outcome.succeeded:
             try:
-                outcome.sha256 = hasher.compute_hashes(target.path).sha256
+                if (outcome.file_identity is not None
+                        and matches_current_file_identity(target.path, outcome.file_identity)):
+                    outcome.sha256 = outcome.file_identity.sha256
+                else:
+                    # Metadata changed or bounded identity failed: fall back
+                    # to the existing validated hash path for the allowlist.
+                    outcome.sha256 = hasher.compute_hashes(target.path).sha256
             except OSError as exc:
                 outcome.errors.append(f"hash verification: {type(exc).__name__}")
         return outcome

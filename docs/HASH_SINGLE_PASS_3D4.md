@@ -21,7 +21,9 @@ invocación del hash engine (normalmente cacheada).
    `compute_hashes` con comprobación de cambios.
 5. La comprobación posterior a los motores invalida una identidad desfasada,
    registra una omisión de cobertura y evita persistir ese digest como
-   evidencia actual. Las detecciones y los cambios automáticos permanecen
+   evidencia actual. El `scan_targets.sha256` de una ruta que haya cambiado
+   se deja NULL; una evidencia individual puede conservar el SHA de los bytes
+   que realmente se observaron, pero **no** se atribuye al archivo nuevo. Las detecciones y los cambios automáticos permanecen
    separados de la identidad.
 
 ## Límites y riesgos

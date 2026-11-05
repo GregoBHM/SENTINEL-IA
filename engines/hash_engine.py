@@ -67,7 +67,16 @@ class HashEngine(DetectionEngine):
         """Return known local and opt-in external matches for one file."""
         if target.kind != "file":
             return []
-        hashes = self.compute_hashes(target.path)
+        return self.scan_with_hashes(target, self.compute_hashes(target.path))
+
+    def scan_with_hashes(self, target: ScanTarget, hashes: FileHashes) -> list[Finding]:
+        """Evaluate known hashes; caller must verify the content snapshot.
+
+        This method does not read or revalidate target bytes. Only the internal
+        scanner coordinator should provide observations with a checked identity.
+        """
+        if target.kind != "file":
+            return []
         path = str(target.path)
         findings: list[Finding] = []
         signature = self.store.get_hash_signature(hashes.sha256)

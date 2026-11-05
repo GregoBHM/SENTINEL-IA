@@ -22,6 +22,9 @@ class FileIdentity:
     file_size: int | None = None
     elapsed_seconds: float = 0.0
     reason: str = ""
+    # Internal reuse only. MD5 is for legacy cache compatibility, never trust.
+    md5: str = ""
+    fingerprint: tuple[int, int, int, int, int] | None = None
 
 
 def _is_windows_reparse_point(value: os.stat_result) -> bool:
@@ -32,11 +35,29 @@ def _is_windows_reparse_point(value: os.stat_result) -> bool:
     return bool(getattr(value, "st_file_attributes", 0) & 0x400)
 
 
+def _fingerprint(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (value.st_dev, value.st_ino, value.st_size,
+            value.st_mtime_ns, value.st_ctime_ns)
+
+
+def matches_current_file_identity(path: str | Path, identity: FileIdentity) -> bool:
+    """Conservative metadata check for reuse within one scan, not TOCTOU proof."""
+    if (identity.status != "observed" or not identity.sha256 or not identity.md5
+            or identity.fingerprint is None):
+        return False
+    try:
+        current = os.lstat(path)
+        return (stat.S_ISREG(current.st_mode)
+                and not stat.S_ISLNK(current.st_mode)
+                and not _is_windows_reparse_point(current)
+                and _fingerprint(current) == identity.fingerprint)
+    except OSError:
+        return False
+
+
 def _same_file(a: os.stat_result, b: os.stat_result) -> bool:
     """Reject changes to identity, size or timestamps while reading."""
-    return (a.st_dev, a.st_ino, a.st_size, a.st_mtime_ns, a.st_ctime_ns) == (
-        b.st_dev, b.st_ino, b.st_size, b.st_mtime_ns, b.st_ctime_ns
-    )
+    return _fingerprint(a) == _fingerprint(b)
 
 
 def observe_file_identity(
@@ -59,9 +80,14 @@ def observe_file_identity(
         raise ValueError("Invalid resource limits")
 
     def result(status: str, reason: str, *, digest: str = "",
-               read: int = 0, size: int | None = None) -> FileIdentity:
-        return FileIdentity(label, status, digest, read, size,
-                            max(0.0, time.monotonic() - started), reason)
+               read: int = 0, size: int | None = None,
+               md5_digest: str = "",
+               snapshot: tuple[int, int, int, int, int] | None = None) -> FileIdentity:
+        return FileIdentity(
+            label, status, digest, read, size,
+            max(0.0, time.monotonic() - started), reason,
+            md5=md5_digest, fingerprint=snapshot,
+        )
 
     try:
         # Refuse path-level symbolic links and other reparse-like cases when
@@ -83,6 +109,7 @@ def observe_file_identity(
                     or not _same_file(initial, before)):
                 return result("changed", "File changed between path check and open")
             hasher = hashlib.sha256()
+            legacy_md5 = hashlib.md5(usedforsecurity=False)
             count = 0
             while True:
                 if time.monotonic() - started >= max_seconds:
@@ -98,6 +125,7 @@ def observe_file_identity(
                     break
                 count += len(data)
                 hasher.update(data)
+                legacy_md5.update(data)
             after = os.fstat(fd)
             if (_is_windows_reparse_point(after) or not _same_file(before, after)
                     or count != after.st_size):
@@ -114,7 +142,8 @@ def observe_file_identity(
             if time.monotonic() - started >= max_seconds:
                 return result("limited", "Time budget exhausted", read=count, size=after.st_size)
             return result("observed", "Digest of bytes read; not a malware verdict",
-                          digest=hasher.hexdigest(), read=count, size=after.st_size)
+                          digest=hasher.hexdigest(), read=count, size=after.st_size,
+                          md5_digest=legacy_md5.hexdigest(), snapshot=_fingerprint(after))
         finally:
             os.close(fd)
     except (OSError, ValueError) as exc:

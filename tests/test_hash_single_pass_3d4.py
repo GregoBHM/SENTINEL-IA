@@ -103,7 +103,9 @@ def test_stale_digest_is_invalidated_and_rehashed(
             "SELECT sha256,status FROM scan_targets WHERE session_id=? AND target_path=?",
             (result.session_id, str(sample.absolute())),
         ).fetchone()
-    assert target["sha256"] == hashlib.sha256(new).hexdigest()
+    # The target may have been replaced; do not bind a newer digest to
+    # evidence collected from an older byte snapshot.
+    assert target["sha256"] is None
     assert target["status"] == "partial"
 
 
@@ -155,3 +157,43 @@ def test_limited_identity_does_not_skip_regular_hash_engine(
     assert result.omitted_checks >= 1
     assert calls
     assert store.get_file_identities(result.session_id)[0]["status"] == "limited"
+
+
+def test_replacement_after_hash_match_keeps_original_evidence_hash(
+    tmp_path: Path, monkeypatch,
+):
+    sample = tmp_path / "synthetic.exe"
+    old = b"MZ" + b"matching" * 25
+    new = b"MZ" + b"changed" * 45
+    sample.write_bytes(old)
+    store = SQLiteStore(tmp_path / "db.sqlite")
+    old_digest = hashlib.sha256(old).hexdigest()
+    store.add_hash_signature(
+        old_digest, "synthetic-only", "Synthetic test match",
+        "Local signature fixture (not malware)",
+    )
+    engine = HashEngine(store)
+    original_scan = engine.scan_with_hashes
+
+    def replace_after_match(target, hashes):
+        found = original_scan(target, hashes)
+        sample.write_bytes(new)
+        return found
+
+    monkeypatch.setattr(engine, "scan_with_hashes", replace_after_match)
+    result = _scan(tmp_path, sample, engine)
+    assert result.status == ScanStatus.COMPLETED
+    assert result.omitted_checks >= 1
+    assert result.finding_files == 1
+    # The finding describes the old bytes actually observed, not the new file.
+    assert result.findings[0].sha256 == old_digest
+    rows = store.get_file_identities(result.session_id)
+    assert rows[0]["status"] == "changed"
+    assert rows[0]["sha256"] == ""
+    with store.connection() as conn:
+        target = conn.execute(
+            "SELECT sha256,status FROM scan_targets WHERE session_id=? AND target_path=?",
+            (result.session_id, str(sample.absolute())),
+        ).fetchone()
+    assert target["sha256"] is None
+    assert target["status"] == "partial"

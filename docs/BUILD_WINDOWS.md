@@ -35,24 +35,43 @@ El workflow ejecuta tests, prueba de inicio Qt, empaqueta recursos SQLite / YARA
 
 **Aviso:** no descargues ni ejecutes la versión antigua si produce `_MEI.../db/schema.sql` no encontrado; ese error significa que el EXE no incluye el esquema. Utiliza una ejecución nueva de `main` cuyo workflow termine correctamente. Antes de analizar una PC comprometida, prueba en una VM con snapshot y evita la mitigación experimental en dispositivos reales.
 
-## Método C: GitHub Releases por versión (recomendado para descargas)
+## Método C: GitHub Releases automáticos desde main
 
-El workflow `.github/workflows/release-windows.yml` publica una **pre-release versionada**
-con un tag inmutable por convención (no se reemplaza una versión ya publicada).
+El workflow `.github/workflows/release-windows.yml` publica una **pre-release
+experimental versionada** tras cada push a `main`, siempre que pasen
+pytest, smoke de GUI, la compilación PyInstaller y las verificaciones de
+recursos, manifiesto UAC e icono. Una PR abierta no publica binarios.
 
-1. Edita `RELEASE_VERSION.txt` y escribe una nueva versión, por ejemplo `v0.6.0-beta.2`.
-2. Haz commit y push a `main`. El workflow `Publish versioned Windows prerelease` se inicia automáticamente.
-3. En `Actions`, verifica que las pruebas, los recursos integrados y la compilación de Windows terminen correctamente.
-4. En `https://github.com/GregoBHM/SENTINEL-IA/releases`, abre la versión y descarga directamente
-   `SentinelOneGuard.exe` y `SentinelOneGuard.sha256.txt`.
-5. Las publicaciones son **pre-releases** deliberadamente, porque la mitigación sigue siendo experimental.
+El workflow usa el prefijo `vX.Y.Z-beta.` de `RELEASE_VERSION.txt` y
+crea un tag distinto por ejecución: para evitar reutilizar versiones, el
+sufijo es `1000 + github.run_number`. Por ejemplo, un proyecto con prefijo
+`v0.6.0-beta.` puede producir `v0.6.0-beta.1010`. **No es un contador
+manual de versiones ni una versión estable.** El nombre podría cambiar si
+se modifica la política de numeración en el futuro.
 
-Alternativamente, ejecuta manualmente `Publish versioned Windows prerelease` en Actions desde
-la rama `main`, indicando un tag nuevo con el mismo formato. También puedes crear y publicar
-un tag `vX.Y.Z-beta.N` desde Git; el workflow construye exactamente ese commit.
+1. Fusiona primero la PR aprobada en `main`.
+2. Abre [Actions → Publish versioned Windows prerelease](https://github.com/GregoBHM/SENTINEL-IA/actions/workflows/release-windows.yml).
+3. Comprueba que todas las etapas terminaron correctamente.
+4. Descarga el nuevo `SentinelOneGuard.exe` y
+   `SentinelOneGuard.sha256.txt` desde
+   [Releases](https://github.com/GregoBHM/SENTINEL-IA/releases).
+5. Verifica el SHA-256 antes de ejecutarlo en una VM con snapshot.
 
-No vuelvas a utilizar un tag existente: las versiones publicadas **no se sobrescriben**.
-Las descargas de Releases no dependen de la caducidad de los artefactos de Actions.
+Las publicaciones son nuevas versiones inmutables por convención; nunca
+se sobrescribe un Release anterior. **Cada push a main provoca otra
+compilación Windows** además de `windows-exe.yml`, por lo que aumentan los
+minutos de GitHub Actions. Las pre-releases experimentales todavía requieren
+prueba interactiva para su uso real y no deben confundirse con un programa
+de seguridad certificado.
+
+También puedes ejecutar el workflow manualmente desde `main` con un tag
+nuevo `vX.Y.Z-beta.N` o publicar un tag válido `v*`, sin reemplazar
+publicaciones existentes. El modo manual sin versión utiliza
+`RELEASE_VERSION.txt` y puede ser rechazado si esa versión ya existe.
+
+**GitHub Packages no es un canal de distribución EXE nativo**: el
+`.exe` se ofrece como asset de Releases y como artefacto temporal de
+Actions. Publicar un contenedor en GHCR sería un producto distinto.
 
 ## Validación de seguridad previa a su uso
 

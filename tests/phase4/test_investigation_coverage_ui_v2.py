@@ -36,6 +36,6 @@ def test_evidence_dialog_exposes_content_identity_and_omissions(tmp_path: Path):
     dialog.category.setCurrentIndex(index)
     assert dialog.table.rowCount() == 1
     assert "Huella de contenido" in dialog.table.item(0, 2).text()
-    assert "no confirma seguridad" in dialog.table.item(0, 4).text()
+    assert "ni confirma seguridad" in dialog.table.item(0, 4).text()
     dialog.close()
     assert app is not None

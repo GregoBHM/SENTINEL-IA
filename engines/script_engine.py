@@ -32,8 +32,8 @@ _COMPILED = {key: tuple(re.compile(p, re.I) for p in patterns)
 # PowerShell -EncodedCommand is typically UTF-16LE. Never execute the decoded
 # command, store its plaintext, or decompress arbitrary data.
 _POWERSHELL_ENCODED_COMMAND = re.compile(
-    r"(?i)\\b(?:powershell|pwsh)(?:\\.exe)?\\b[^\\r\\n]{0,160}?"
-    r"\\s-(?:encodedcommand|enc)\\s+([A-Za-z0-9+/=]{16,12289})(?![A-Za-z0-9+/=])"
+    r"(?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\r\n]{0,160}?"
+    r"\s-(?:encodedcommand|enc)\s+([A-Za-z0-9+/=]{16,12289})(?![A-Za-z0-9+/=])"
 )
 _MAX_ENCODED_COMMAND_CHARS = 8192
 _MAX_DECODED_COMMAND_BYTES = 6144
@@ -41,7 +41,7 @@ _MAX_DECODED_COMMAND_BYTES = 6144
 
 def _script_text(data: bytes) -> str:
     """Decode ordinary UTF-8 or explicitly UTF-16LE Windows script content."""
-    if data.startswith(b"\\xff\\xfe"):
+    if data.startswith(b"\xff\xfe"):
         return data.decode("utf-16", errors="replace")
     if len(data) >= 8 and len(data) % 2 == 0:
         sample = data[: min(512, len(data))]
@@ -79,7 +79,7 @@ def indicators_from_script(data: bytes) -> list[str]:
             command = decoded.decode("utf-16-le", errors="strict")
         except (ValueError, UnicodeError, binascii.Error):
             continue
-        if any(ord(char) < 32 and char not in "\\r\\n\\t" for char in command):
+        if any(ord(char) < 32 and char not in "\r\n\t" for char in command):
             continue
         # Intentionally no recursive decoding: bounded, low-confidence hints.
         detected.update(_categories(command))

@@ -92,3 +92,24 @@ def test_vba_absent_in_valid_ooxml_has_no_macro_signal(tmp_path: Path):
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as handle:
         handle.writestr("word/document.xml", "<document>synthetic</document>")
     assert ScriptEngine().scan(ScanTarget(path)) == []
+
+
+def test_credential_and_recovery_hints_need_multiple_categories():
+    # Only synthetic text; no secrets and no actual system modifications.
+    single = b"CryptUnprotectData(dummy)"
+    assert ScriptEngine().inspect_bytes(single, "synthetic.ps1") == []
+    combined = (
+        b"CryptUnprotectData(dummy); "
+        b"Invoke-WebRequest https://invalid.example/test"
+    )
+    findings = ScriptEngine().inspect_bytes(combined, "synthetic.ps1")
+    assert len(findings) == 1
+    assert "credential_access" in findings[0].details["indicator_categories"]
+    assert "T1555" in findings[0].mitre_techniques
+    assert "stealer" not in findings[0].threat_type.lower()
+
+    recovery = b"vssadmin delete shadows /all /quiet; set-mppreference -DisableRealtimeMonitoring $true"
+    findings = ScriptEngine().inspect_bytes(recovery, "synthetic.cmd")
+    assert len(findings) == 1
+    assert "T1490" in findings[0].mitre_techniques
+    assert findings[0].details["executed"] is False

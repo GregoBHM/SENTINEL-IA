@@ -48,3 +48,15 @@ presupuesto de scripts o VBA cifrado. Se reporta `ScanSkipped` (omisión)
 y nunca un estado limpio sobre contenido que no pudo interpretarse.
 Esto **no sustituye** un worker con aislamiento y tiempo máximo de ejecución
 para macros complejas o documentos malformados.
+
+## Categorías heurísticas añadidas
+
+- `credential_access`: referencias específicas a interfaces de acceso a
+  credenciales (por ejemplo CryptUnprotectData y PasswordVault).
+- `recovery_interference`: comandos de scripts que intentan modificar copias
+  de seguridad o mecanismos de recuperación.
+
+Se requiere combinación de dos familias distintas para generar una alerta
+heurística. `T1555` y `T1490` son taxonomías orientativas, **no** pruebas de
+robo de cuentas, ejecución de ransomware, éxito del comando o infección real.
+No se introducen sanciones ni acciones de reparación automáticas.

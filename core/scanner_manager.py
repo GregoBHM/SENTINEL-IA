@@ -115,6 +115,9 @@ class ScannerManager:
         self._discovery_closed = False
         self._last_perf_publish = 0.0
         self._resource_process = None
+        # Limits simultaneous full-file hashing, not small header reads or
+        # other parsers. The global worker pool remains separately bounded.
+        self._hash_io_slots = threading.BoundedSemaphore(config.max_hash_io_workers)
 
     def _performance_payload(self, *, allow_estimate: bool = True) -> dict:
         """Prepare local metrics; optional process telemetry cannot break scans."""
@@ -202,7 +205,8 @@ class ScannerManager:
             file_header.startswith(b"MZ")
             or target.path.suffix.lower() in {".exe", ".dll", ".sys", ".scr"}
         ) and not self._cancel.is_set():
-            outcome.file_identity = observe_file_identity(target.path)
+            with self._hash_io_slots:
+                outcome.file_identity = observe_file_identity(target.path)
             if outcome.file_identity.status != "observed":
                 # Report a coverage limit, never a new detection signal.
                 description = (
@@ -261,6 +265,9 @@ class ScannerManager:
                     signals = engine.scan_with_hashes(
                         target, FileHashes(identity.sha256, identity.md5, identity.file_size)
                     )
+                elif isinstance(engine, HashEngine) and target.kind == "file":
+                    with self._hash_io_slots:
+                        signals = engine.scan(target)
                 else:
                     signals = engine.scan(target)
                 outcome.signals.extend(signals)
@@ -328,7 +335,8 @@ class ScannerManager:
                 else:
                     # A limited or unavailable identity does not disable the
                     # established hash check and its cache.
-                    outcome.sha256 = hasher.compute_hashes(target.path).sha256
+                    with self._hash_io_slots:
+                        outcome.sha256 = hasher.compute_hashes(target.path).sha256
             except OSError as exc:
                 outcome.errors.append(f"hash verification: {type(exc).__name__}")
         return outcome

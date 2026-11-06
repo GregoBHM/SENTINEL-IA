@@ -336,6 +336,22 @@ class OneGuardWindow(QMainWindow):
         overview.addWidget(self.home_last_scan)
         column.addWidget(panel(overview, "Hero"))
 
+        # These numbers describe only the latest persisted scan, never system safety.
+        home_metrics = QHBoxLayout()
+        self.home_scanned_tile = MetricTile("Archivos evaluados", COLORS["accent"])
+        self.home_findings_tile = MetricTile("Objetivos con hallazgos", COLORS["amber"])
+        self.home_errors_tile = MetricTile("Errores de análisis", COLORS["danger"])
+        for tile in (self.home_scanned_tile, self.home_findings_tile,
+                     self.home_errors_tile):
+            tile.number.setText("—")
+            home_metrics.addWidget(tile, 1)
+        column.addLayout(home_metrics)
+        self.home_coverage_warning = label(
+            "Sin evaluación previa · no es posible concluir el estado del equipo.",
+            "SmallHelp",
+        )
+        column.addWidget(self.home_coverage_warning)
+
         column.addWidget(label("ELIGE CÓMO INSPECCIONAR", "Eyebrow"))
         options = QHBoxLayout()
         for kind, heading, detail in (
@@ -368,8 +384,13 @@ class OneGuardWindow(QMainWindow):
         foot.addWidget(history)
         column.addLayout(foot)
         column.addStretch()
+        home_scroll = QScrollArea()
+        home_scroll.setWidgetResizable(True)
+        home_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        home_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        home_scroll.setWidget(page)
         self.pages.removeWidget(self.pages.widget(0))
-        self.pages.insertWidget(0, page)
+        self.pages.insertWidget(0, home_scroll)
 
     def _setup_scan(self) -> None:
         """Build real-time metrics, phases, progress and bounded log console."""
@@ -512,6 +533,14 @@ class OneGuardWindow(QMainWindow):
         column.addWidget(label("Resultados explicados", "Title"))
         self.results_caption = label("Selecciona una sesión para ver sus resultados")
         column.addWidget(self.results_caption)
+        review_banner = QVBoxLayout()
+        review_banner.addWidget(label("RESUMEN DE REVISIÓN", "Eyebrow"))
+        self.results_review_label = label(
+            "Sin sesión seleccionada. La ausencia de alertas no confirma seguridad.",
+            "SmallHelp",
+        )
+        review_banner.addWidget(self.results_review_label)
+        column.addWidget(panel(review_banner, "Insight"))
         filters = QHBoxLayout()
         self.severity_filter = QComboBox()
         self.severity_filter.addItems(["Todas", "critical", "high", "medium", "low", "info"])
@@ -1296,6 +1325,14 @@ class OneGuardWindow(QMainWindow):
             f"{len(actionable)} requieren revisión. "
             "Sin hallazgos no equivale a un equipo limpio."
         )
+        suppressed = sum(record.suppressed for record in rows)
+        self.results_review_label.setText(
+            f"{severe} alertas altas/críticas para revisar · "
+            f"{len(actionable)} alertas no excluidas con riesgo ≥20 · "
+            f"{suppressed} excluidas por política. "
+            "Este resumen solo incluye las filas cargadas de la sesión; "
+            "revisa también cobertura, errores y objetivos omitidos."
+        )
 
     def _update_filter(self, *_args) -> None:
         """Apply active filters to the bounded in-memory table model."""
@@ -1410,10 +1447,25 @@ class OneGuardWindow(QMainWindow):
                 f"{latest.scanned:,} archivos · {latest.finding_files} objetivos con hallazgos · "
                 f"{latest.errors} errores".replace(",", ".")
             )
+            self.home_scanned_tile.set_count(latest.scanned)
+            self.home_findings_tile.set_count(latest.finding_files)
+            self.home_errors_tile.set_count(latest.errors)
+            self.home_coverage_warning.setText(
+                "Análisis interrumpido o fallido: resultados no concluyentes."
+                if latest.status != "completed"
+                else "Análisis finalizado. Comprueba omisiones, cobertura y evidencias; "
+                     "sin hallazgos no demuestra equipo limpio."
+            )
         else:
             self.home_status.setText("Todavía no se ha evaluado este equipo.")
             self.home_last_scan.setText(
                 "Inicia un análisis; no se ha confirmado la seguridad del sistema."
+            )
+            for tile in (self.home_scanned_tile, self.home_findings_tile,
+                         self.home_errors_tile):
+                tile.number.setText("—")
+            self.home_coverage_warning.setText(
+                "Sin evaluación previa · no es posible concluir el estado del equipo."
             )
         for row_index, record in enumerate(sessions):
             try:

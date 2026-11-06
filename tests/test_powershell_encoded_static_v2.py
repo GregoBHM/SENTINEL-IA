@@ -72,3 +72,23 @@ def test_archive_script_budget_is_enforced():
     engine = ScriptEngine(max_script_bytes=64)
     with pytest.raises(ScanSkipped):
         engine.inspect_bytes(b"powershell " + b"x" * 128, "archive::big.ps1")
+
+
+def test_oversized_vba_project_reports_incomplete_coverage(tmp_path: Path):
+    import zipfile
+
+    path = tmp_path / "synthetic.docm"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as handle:
+        handle.writestr("word/vbaProject.bin", b"x" * 9000)
+    engine = ScriptEngine(max_script_bytes=8192)
+    with pytest.raises(ScanSkipped, match="VBA excede"):
+        engine.scan(ScanTarget(path))
+
+
+def test_vba_absent_in_valid_ooxml_has_no_macro_signal(tmp_path: Path):
+    import zipfile
+
+    path = tmp_path / "document.docm"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as handle:
+        handle.writestr("word/document.xml", "<document>synthetic</document>")
+    assert ScriptEngine().scan(ScanTarget(path)) == []

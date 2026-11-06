@@ -1,6 +1,8 @@
 """Script and macro heuristics: strings and structure only, never execution."""
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 import zipfile
 from pathlib import Path
@@ -23,15 +25,73 @@ _FAMILIES: dict[str, tuple[str, ...]] = {
                     r"new-service\b", r"startup\\"),
     "security_interference": (r"set-mppreference\b", r"add-mppreference\b",
                               r"disableantispyware", r"disablebehaviormonitoring"),
+    "credential_access": (
+        r"\bcryptunprotectdata\s*\(", r"\bcredenumerate(?:a|w)?\s*\(",
+        r"\bpasswordvault\b",
+    ),
+    "recovery_interference": (
+        r"\bvssadmin(?:\.exe)?\s+delete\s+shadows\b",
+        r"\bwbadmin(?:\.exe)?\s+delete\s+catalog\b",
+    ),
 }
 _COMPILED = {key: tuple(re.compile(p, re.I) for p in patterns)
              for key, patterns in _FAMILIES.items()}
 
+# PowerShell -EncodedCommand is typically UTF-16LE. Never execute the decoded
+# command, store its plaintext, or decompress arbitrary data.
+_POWERSHELL_ENCODED_COMMAND = re.compile(
+    r"(?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\r\n]{0,160}?"
+    r"\s-(?:encodedcommand|enc)\s+([A-Za-z0-9+/=]{16,12289})(?![A-Za-z0-9+/=])"
+)
+_MAX_ENCODED_COMMAND_CHARS = 8192
+_MAX_DECODED_COMMAND_BYTES = 6144
+
+
+def _script_text(data: bytes) -> str:
+    """Decode ordinary UTF-8 or explicitly UTF-16LE Windows script content."""
+    if data.startswith(b"\xff\xfe"):
+        return data.decode("utf-16", errors="replace")
+    if len(data) >= 8 and len(data) % 2 == 0:
+        sample = data[: min(512, len(data))]
+        if sample[1::2].count(0) > len(sample[1::2]) // 2:
+            return data.decode("utf-16-le", errors="replace")
+    return data.decode("utf-8-sig", errors="replace")
+
+
+def _categories(text: str) -> set[str]:
+    return {
+        name for name, patterns in _COMPILED.items()
+        if any(pattern.search(text) for pattern in patterns)
+    }
+
 
 def indicators_from_script(data: bytes) -> list[str]:
-    """Return category names, not contents, to avoid leaking script secrets."""
-    text = data.decode("utf-8-sig", errors="replace")
-    return [name for name, patterns in _COMPILED.items() if any(p.search(text) for p in patterns)]
+    """Identify behavioral categories from bounded static text, never execution.
+
+    Decoding PowerShell EncodedCommand is a best-effort layer only. Unsupported
+    formats and non-script encodings are NOT assumed clean, and the original
+    encoded/decoded content is never included in the returned result.
+    """
+    text = _script_text(data)
+    detected = _categories(text)
+    # Limit interpretation to the first 64 KiB of script and four small tokens.
+    for match in list(_POWERSHELL_ENCODED_COMMAND.finditer(text[:65536]))[:4]:
+        token = match.group(1)
+        if len(token) > _MAX_ENCODED_COMMAND_CHARS:
+            continue
+        try:
+            decoded = base64.b64decode(token, validate=True)
+            if (len(decoded) > _MAX_DECODED_COMMAND_BYTES
+                    or len(decoded) % 2 != 0 or not decoded):
+                continue
+            command = decoded.decode("utf-16-le", errors="strict")
+        except (ValueError, UnicodeError, binascii.Error):
+            continue
+        if any(ord(char) < 32 and char not in "\r\n\t" for char in command):
+            continue
+        # Intentionally no recursive decoding: bounded, low-confidence hints.
+        detected.update(_categories(command))
+    return [name for name in _FAMILIES if name in detected]
 
 
 class ScriptEngine(DetectionEngine):
@@ -45,6 +105,8 @@ class ScriptEngine(DetectionEngine):
 
     def inspect_bytes(self, data: bytes, label: str) -> list[Finding]:
         """Analyze in-memory script data, also used by the archive engine."""
+        if len(data) > self.max_script_bytes:
+            raise ScanSkipped("Script no inspeccionado: excede el presupuesto estático")
         indicators = indicators_from_script(data)
         if len(indicators) < 2:
             return []
@@ -54,6 +116,10 @@ class ScriptEngine(DetectionEngine):
             mitre.append("T1027")
         if "persistence" in indicators:
             mitre.append("T1547.001")
+        if "credential_access" in indicators:
+            mitre.append("T1555")
+        if "recovery_interference" in indicators:
+            mitre.append("T1490")
         return [Finding(
             target=label, engine=self.name, threat_type="Script potencialmente peligroso",
             reason="Combinación de patrones de script: " + ", ".join(indicators),
@@ -90,9 +156,21 @@ class ScriptEngine(DetectionEngine):
         """Locate VBA projects and parse them only if oletools is available."""
         try:
             with zipfile.ZipFile(path) as archive:
-                entries = archive.namelist()
-                if not any(name.lower().endswith("vbaproject.bin") for name in entries):
+                # A small container can advertise very large VBA members.
+                # Avoid handing such content to a parser without limits.
+                entries = archive.infolist()
+                if len(entries) > 5000:
+                    raise ScanSkipped("OOXML: demasiadas entradas para el inventario VBA")
+                projects = [
+                    row for row in entries
+                    if row.filename.lower().endswith("vbaproject.bin")
+                ]
+                if not projects:
                     return []
+                if any(row.file_size > self.max_script_bytes for row in projects):
+                    raise ScanSkipped("OOXML: VBA excede el presupuesto de contenido")
+                if any(row.flag_bits & 1 for row in projects):
+                    raise ScanSkipped("OOXML: VBA cifrado, no inspeccionable")
         except (OSError, zipfile.BadZipFile) as exc:
             raise ScanSkipped(f"No se pudo abrir documento OOXML: {type(exc).__name__}") from exc
         try:

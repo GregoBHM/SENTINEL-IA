@@ -1,6 +1,7 @@
 """Read-only local investigation table with explicit provenance and scope."""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout,
     QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout,
@@ -45,12 +46,11 @@ class EvidenceTraceDialog(QDialog):
         intro.setWordWrap(True)
         layout.addWidget(intro)
         coverage = read_investigation_coverage(store, session_id)
-        self.coverage_label = QLabel("\\n".join(coverage.lines()))
+        self.coverage_label = QLabel("\n".join(coverage.lines()))
         self.coverage_label.setObjectName("SmallHelp")
         self.coverage_label.setWordWrap(True)
         self.coverage_label.setTextInteractionFlags(
-            self.coverage_label.textInteractionFlags()
-            | self.coverage_label.textInteractionFlags().TextSelectableByMouse
+            Qt.TextInteractionFlag.TextSelectableByMouse
         )
         layout.addWidget(self.coverage_label)
         bar = QHBoxLayout()

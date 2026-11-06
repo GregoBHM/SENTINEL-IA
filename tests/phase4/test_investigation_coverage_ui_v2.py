@@ -30,7 +30,7 @@ def test_evidence_dialog_exposes_content_identity_and_omissions(tmp_path: Path):
     )
     dialog = EvidenceTraceDialog(store, "case")
     assert "Comprobaciones finalizadas: 1" in dialog.coverage_label.text()
-    assert "NO" in dialog.coverage_label.text() or "No" in dialog.coverage_label.text()
+    assert "La falta de alertas no excluye malware" in dialog.coverage_label.text()
     index = dialog.category.findData("content_identity")
     assert index >= 0
     dialog.category.setCurrentIndex(index)

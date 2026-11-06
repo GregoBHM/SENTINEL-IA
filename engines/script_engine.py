@@ -144,9 +144,21 @@ class ScriptEngine(DetectionEngine):
         """Locate VBA projects and parse them only if oletools is available."""
         try:
             with zipfile.ZipFile(path) as archive:
-                entries = archive.namelist()
-                if not any(name.lower().endswith("vbaproject.bin") for name in entries):
+                # A small container can advertise very large VBA members.
+                # Avoid handing such content to a parser without limits.
+                entries = archive.infolist()
+                if len(entries) > 5000:
+                    raise ScanSkipped("OOXML: demasiadas entradas para el inventario VBA")
+                projects = [
+                    row for row in entries
+                    if row.filename.lower().endswith("vbaproject.bin")
+                ]
+                if not projects:
                     return []
+                if any(row.file_size > self.max_script_bytes for row in projects):
+                    raise ScanSkipped("OOXML: VBA excede el presupuesto de contenido")
+                if any(row.flag_bits & 1 for row in projects):
+                    raise ScanSkipped("OOXML: VBA cifrado, no inspeccionable")
         except (OSError, zipfile.BadZipFile) as exc:
             raise ScanSkipped(f"No se pudo abrir documento OOXML: {type(exc).__name__}") from exc
         try:

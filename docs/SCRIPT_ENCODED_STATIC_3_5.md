@@ -39,3 +39,12 @@ python -m pytest -q
 Validar compatibilidad con reglas YARA, archivo ZIP, UTF-16, memoria y falso
 positivo con scripts benignos; después, Windows CI y pruebas en una VM.
 No habilitar mitigación automática a partir de estas señales.
+
+## Refuerzo adicional de documentos OOXML
+
+Antes de delegar la inspección a oletools, el motor rechaza explícitamente
+contenedores con más de 5000 entradas, proyectos VBA declarados mayores al
+presupuesto de scripts o VBA cifrado. Se reporta `ScanSkipped` (omisión)
+y nunca un estado limpio sobre contenido que no pudo interpretarse.
+Esto **no sustituye** un worker con aislamiento y tiempo máximo de ejecución
+para macros complejas o documentos malformados.

@@ -25,6 +25,14 @@ _FAMILIES: dict[str, tuple[str, ...]] = {
                     r"new-service\b", r"startup\\"),
     "security_interference": (r"set-mppreference\b", r"add-mppreference\b",
                               r"disableantispyware", r"disablebehaviormonitoring"),
+    "credential_access": (
+        r"\bcryptunprotectdata\s*\(", r"\bcredenumerate(?:a|w)?\s*\(",
+        r"\bpasswordvault\b",
+    ),
+    "recovery_interference": (
+        r"\bvssadmin(?:\.exe)?\s+delete\s+shadows\b",
+        r"\bwbadmin(?:\.exe)?\s+delete\s+catalog\b",
+    ),
 }
 _COMPILED = {key: tuple(re.compile(p, re.I) for p in patterns)
              for key, patterns in _FAMILIES.items()}
@@ -108,6 +116,10 @@ class ScriptEngine(DetectionEngine):
             mitre.append("T1027")
         if "persistence" in indicators:
             mitre.append("T1547.001")
+        if "credential_access" in indicators:
+            mitre.append("T1555")
+        if "recovery_interference" in indicators:
+            mitre.append("T1490")
         return [Finding(
             target=label, engine=self.name, threat_type="Script potencialmente peligroso",
             reason="Combinación de patrones de script: " + ", ".join(indicators),

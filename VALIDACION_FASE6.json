@@ -1,16 +1,19 @@
 {
   "product": "Sentinel OneGuard",
   "source_version": "0.6.0",
-  "release_type": "fuentes y build reproducible; NO EXE compilado",
-  "validation_date_utc": "2026-11-01T14:47:28.241012+00:00",
+  "release_type": "pre-release experimental; CI Windows verificada en PR #21",
+  "validation_date_utc": "2026-11-06T00:00:00+00:00",
   "validation_os": "Linux",
-  "pytest_passed": 84,
-  "pytest_skipped": 4,
+  "pytest_passed": 183,
+  "pytest_skipped": 24,
   "pytest_failed": 0,
   "compileall": "pass",
   "cli_synthetic_hash_end_to_end": "pass",
-  "windows_exe_build": "not_run_no_windows",
-  "windows_gui_uac_acl_native": "not_run_no_windows",
+  "windows_exe_build": "verified_in_windows_ci_pr21",
+  "windows_gui_uac_acl_native": "verified_in_windows_ci_pr21",
+  "pending_pr22_ci_and_review": true,
   "production_antimalware_certified": false,
-  "mitigation_validated_windows": false
+  "mitigation_validated_windows": false,
+  "must_not_claim_clean_or_eradicated": true,
+  "not_substitute_for_microsoft_defender": true
 }

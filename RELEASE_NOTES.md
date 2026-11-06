@@ -2,6 +2,32 @@
 
 **Estado:** paquete de desarrollo completo, preparado para compilación en Windows; **no certificado como antivirus de producción**.
 
+## Estado verificado (6 de noviembre de 2026)
+
+- PR #16 a #21 fusionadas en `main`.
+- Integración de PR #21 validada en Windows CI: 185 passed, 16 skipped, 6 warnings; EXE PyInstaller, subsistema GUI, icono y UAC verificados.
+- PR #22 añade resumen de cobertura para investigación/HTML y mantiene validación propia pendiente.
+- Sigue sin existir evidencia suficiente para declarar eficacia/seguridad de antivirus de producción.
+
+## Criterios pendientes para beta funcional revisable
+
+- [ ] Resolver CI de PR #22 y revisar impacto en reportes HTML e interfaz.
+- [ ] Comprobar UI interactiva en Windows 10/11 (resolución mínima, DPI, navegación por teclado, contraste y textos extensos).
+- [ ] Medir rendimiento y consumo CPU/RAM/I/O en HDD y SSD; comparar hash lanes y validar pausa/cancelación.
+- [ ] Verificar EXE real en VM, recursos `schema.sql`, icono, UAC y flujos de exportación/restauración, preservando capturas/logs sin datos privados.
+- [ ] Ejecutar regresiones de archivos inaccesibles, cambios concurrentes, symlinks/hardlinks/reparse points, ZIP/RAR/7z cifrados y comprimidos malformados.
+- [ ] Probar seguridad de cuarentena, recuperación y persistencia HKCU ante fallos/cortes de energía/permisos restringidos, siempre con consentimiento explícito.
+
+## Criterios adicionales antes de distribuir como antivirus confiable
+
+- [ ] Evaluar detección con corpus autorizado benigno/malicioso y etiquetas verificadas; publicar FP/FN, sensibilidad, precisión, cobertura y límites por amenaza.
+- [ ] Aislar inspección completa de 7z en worker con límites de CPU/memoria/tiempo (la implementación actual solo inventaría contenido).
+- [ ] Analizar scripts/PE/servicios más allá de heurísticas simples; validar Authenticode/revocación/publisher y proceso mapeado con protección anti-TOCTOU.
+- [ ] Validar recuperación postincidente, criterios de reinstalación y prevención de reinstauración de persistencia.
+- [ ] Firmar ejecutable y definir cadena segura de actualizaciones, integridad de versiones y gestión de incidentes del producto.
+
+> **Nota de producto:** ningún resultado debe afirmar que un equipo está limpio o que una infección fue erradicada. Puede existir malware no inspeccionado, robo de credenciales previo o rootkits fuera de cobertura. No sustituye Microsoft Defender.
+
 ## Contenido de la entrega
 
 - Núcleo multimotor: hash SHA-256, YARA, PE/DLL, archivos comprimidos, procesos/red, persistencia y scripts.

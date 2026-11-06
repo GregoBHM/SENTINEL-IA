@@ -26,6 +26,7 @@ class ScanConfig:
     exclusions: tuple[Path, ...] = ()
     max_workers: int = 3
     max_pending: int = 12
+    max_hash_io_workers: int = 2
     yara_max_file_size: int = 64 * 1024 * 1024
     yara_timeout_seconds: int = 20
     yara_backend: str = field(
@@ -50,6 +51,8 @@ class ScanConfig:
         """Guard against unbounded or contradictory configurations."""
         if not 1 <= self.max_workers <= 32:
             raise ValueError("max_workers debe estar entre 1 y 32")
+        if not 1 <= self.max_hash_io_workers <= 8:
+            raise ValueError("max_hash_io_workers debe estar entre 1 y 8")
         if self.max_pending < self.max_workers:
             raise ValueError("max_pending debe ser >= max_workers")
         if self.yara_timeout_seconds < 1 or self.yara_max_file_size < 1:
@@ -83,7 +86,8 @@ def load_config_file(path: Path) -> ScanConfig:
     paths = raw.get("paths", {})
     if not isinstance(scanner, dict) or not isinstance(paths, dict):
         raise ValueError("Las secciones scanner/paths deben ser tablas")
-    allowed_scanner = {"max_workers", "max_pending", "yara_max_file_size_mb",
+    allowed_scanner = {"max_workers", "max_pending", "max_hash_io_workers",
+                       "yara_max_file_size_mb",
                        "yara_timeout_seconds", "yara_backend", "exclusions", "pe_max_file_size_mb",
                        "script_max_bytes_mb", "archive_max_depth", "archive_max_entries",
                        "archive_max_total_bytes_mb", "archive_max_member_bytes_mb",
@@ -100,6 +104,9 @@ def load_config_file(path: Path) -> ScanConfig:
         exclusions=tuple(Path(s).expanduser() for s in scanner.get("exclusions", [])),
         max_workers=int(scanner.get("max_workers", defaults.max_workers)),
         max_pending=int(scanner.get("max_pending", defaults.max_pending)),
+        max_hash_io_workers=int(scanner.get(
+            "max_hash_io_workers", defaults.max_hash_io_workers
+        )),
         yara_max_file_size=int(scanner.get("yara_max_file_size_mb", 64)) * 1024 * 1024,
         yara_timeout_seconds=int(scanner.get(
             "yara_timeout_seconds", defaults.yara_timeout_seconds

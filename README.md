@@ -1,10 +1,15 @@
 # Sentinel OneGuard — Escáner antimalware experimental para Windows
 
-### Descarga Windows · v0.6.0-beta.2
+### Descarga Windows · beta experimental (versiones actualizadas)
 
-[**Descargar SentinelOneGuard.exe (Windows 10/11 x64)**](https://github.com/GregoBHM/SENTINEL-IA/releases/download/v0.6.0-beta.2/SentinelOneGuard.exe)
-&nbsp; · &nbsp; [Ver la versión en Releases](https://github.com/GregoBHM/SENTINEL-IA/releases/tag/v0.6.0-beta.2)
-&nbsp; · &nbsp; [SHA-256](https://github.com/GregoBHM/SENTINEL-IA/releases/download/v0.6.0-beta.2/SentinelOneGuard.sha256.txt)
+[**Abrir GitHub Releases — elegir la beta más reciente**](https://github.com/GregoBHM/SENTINEL-IA/releases)
+&nbsp; · &nbsp; [Compilaciones automáticas desde main](https://github.com/GregoBHM/SENTINEL-IA/actions/workflows/windows-exe.yml)
+
+Cada nueva actualización fusionada en `main` puede generar una pre-release
+con `SentinelOneGuard.exe` y `SentinelOneGuard.sha256.txt`, **solo si el
+workflow de publicación Windows termina correctamente**. No se actualiza
+automáticamente el EXE ya descargado: hay que obtener y verificar la nueva
+versión. GitHub Packages no es el canal de distribución de esta aplicación.
 
 > **PRE-RELEASE EXPERIMENTAL — No es un antivirus de producción.** Ejecuta primero en una VM con snapshot. La mitigación no está validada para recuperar equipos comprometidos y no sustituye Microsoft Defender.
 
@@ -14,7 +19,7 @@
 
 ## Entrega
 
-**Descarga Windows (experimental):** [Releases](https://github.com/GregoBHM/SENTINEL-IA/releases). Para publicar una nueva versión, actualiza `RELEASE_VERSION.txt` a un tag nuevo (por ejemplo `v0.6.0-beta.2`) y haz push a `main`. El workflow compila, valida y publica la pre-release si todo es correcto. [Instrucciones detalladas](docs/BUILD_WINDOWS.md).
+**Descarga Windows (experimental):** [Releases](https://github.com/GregoBHM/SENTINEL-IA/releases). Al fusionar un cambio en `main`, el workflow de Releases compila, valida y crea una nueva pre-release experimental versionada si todo es correcto. `RELEASE_VERSION.txt` define el prefijo de versión. [Instrucciones detalladas](docs/BUILD_WINDOWS.md).
 
 Consulta `RELEASE_NOTES.md` para el contenido de esta versión y las verificaciones pendientes.
 

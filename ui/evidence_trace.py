@@ -1,12 +1,14 @@
 """Read-only local investigation table with explicit provenance and scope."""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout,
     QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
 from core.evidence_trace import EvidenceTrace, read_evidence_trace
+from core.investigation_coverage import read_investigation_coverage
 from db.database import SQLiteStore
 
 
@@ -19,6 +21,7 @@ _CATEGORIES = {
     "hash": "Hash idéntico",
     "system_link": "Proceso e inicio",
     "identity_limit": "Identidad incompleta",
+    "content_identity": "Huella de archivo",
 }
 
 
@@ -42,6 +45,14 @@ class EvidenceTraceDialog(QDialog):
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
+        coverage = read_investigation_coverage(store, session_id)
+        self.coverage_label = QLabel("\n".join(coverage.lines()))
+        self.coverage_label.setObjectName("SmallHelp")
+        self.coverage_label.setWordWrap(True)
+        self.coverage_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.coverage_label)
         bar = QHBoxLayout()
         bar.addWidget(QLabel("Tipo de evidencia"))
         self.category = QComboBox()

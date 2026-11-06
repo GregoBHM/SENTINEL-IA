@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from db.database import SQLiteStore, utc_now
+from core.investigation_coverage import read_investigation_coverage
 
 
 def _safe_csv_cell(value: object) -> str:
@@ -82,6 +83,7 @@ class ReportService:
     def export_html(self, session_id: str, destination: Path) -> Path:
         """Export HTML with all user-controlled fields HTML-escaped and no scripts."""
         session, findings = self._data(session_id)
+        coverage = read_investigation_coverage(self.store, session_id)
         e = lambda x: html.escape(str(x if x is not None else ""), quote=True)
         rows = []
         for item in findings:
@@ -89,6 +91,9 @@ class ReportService:
                      item["threat_type"], item["target_path"], item["reason"],
                      item["sha256"] or "", item["engines_json"])
             rows.append("<tr>" + "".join(f"<td>{e(c)}</td>" for c in cells) + "</tr>")
+        coverage_notes = "".join(
+            "<li>" + e(line) + "</li>" for line in coverage.lines()
+        )
         body = f'''<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <title>Sentinel OneGuard — Informe {e(session_id)}</title>
@@ -104,6 +109,8 @@ th{{color:#50d9ff}} .warn{{padding:12px;border:1px solid #8d6b3b}}</style></head
 <p class="warn">Un hallazgo no demuestra infección por sí mismo. Un análisis sin alertas NO certifica un equipo limpio.
 Las sesiones canceladas, errores y análisis parciales requieren investigación adicional.
 Este documento puede contener rutas privadas: consérvalo de forma segura.</p>
+<h2>Alcance y limitaciones de la investigación</h2>
+<ul>{coverage_notes}</ul>
 <h2>Hallazgos</h2><table><thead><tr><th>Severidad</th><th>Riesgo</th><th>Confianza</th>
 <th>Tipo</th><th>Objetivo</th><th>Motivo</th><th>SHA-256</th><th>Motores</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table><small>Informe local generado: {e(utc_now())}.

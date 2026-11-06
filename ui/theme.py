@@ -16,6 +16,20 @@ QLabel { background: transparent; border: none; padding: 0; }
 QScrollArea { background: #0B111A; border: none; }
 QFrame#Sidebar { background: #101925; border-right: 1px solid #263647; }
 QFrame#Panel, QFrame#Metric, QFrame#WizardPanel, QFrame#Insight { background: #141F2D; border: 1px solid #263647; border-radius: 13px; }
+QFrame#EngineDeck {
+    background: #111F2F;
+    border: 1px solid #315266;
+    border-radius: 14px;
+}
+QTableWidget#EngineTable {
+    background: #0D1926;
+    border: 1px solid #253D50;
+    border-radius: 8px;
+    selection-background-color: #19394D;
+}
+QTableWidget#EngineTable::item {
+    padding: 5px 7px;
+}
 QFrame#Hero { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #173448, stop:0.5 #123041, stop:1 #172331); border: 1px solid #2A5062; border-radius: 17px; }
 QLabel#Title { font-size: 29px; font-weight: 700; letter-spacing: 0px; }
 QLabel#Heading { font-size: 21px; font-weight: 700; }

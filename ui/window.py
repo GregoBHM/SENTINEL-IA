@@ -45,6 +45,7 @@ from ui.theme import COLORS, severity_color
 from ui.scan_messages import explain_scan_error
 from ui.file_coverage import FileCoverageDialog
 from ui.evidence_trace import EvidenceTraceDialog
+from ui.engine_overview import EngineOverview
 from ui.profiles import ScanPlan
 from ui.wizard import ConsentWizard
 
@@ -393,6 +394,9 @@ class OneGuardWindow(QMainWindow):
         for tile in (self.scanned_tile, self.threats_tile, self.partial_tile, self.error_tile):
             metrics.addWidget(tile, 1)
         column.addLayout(metrics)
+        # A readable live summary; the existing dialog retains full metrics.
+        self.engine_overview = EngineOverview()
+        column.addWidget(self.engine_overview)
         center = QHBoxLayout()
         work_layout = QVBoxLayout()
         work_layout.addWidget(label("ESTADO DEL ANÁLISIS", "Eyebrow"))
@@ -767,6 +771,7 @@ class OneGuardWindow(QMainWindow):
         self.scan_clock.reset()
         self._latest_performance = None
         self._engine_inventory.clear()
+        self.engine_overview.reset()
         self.engine_perf_button.setEnabled(False)
         self.engine_status_label.setText("Motores · preparando inventario")
         self.eta_label.setText("Tiempo restante · recopilando mediciones")
@@ -880,6 +885,7 @@ class OneGuardWindow(QMainWindow):
         """Display observed rates and an explicitly scoped time estimate."""
         self._latest_performance = data
         engines = data.get("engines") or {}
+        self.engine_overview.update_snapshot(self._engine_inventory, engines)
         self.engine_perf_button.setEnabled(bool(engines) or bool(self._engine_inventory))
         resources = data.get("process_resources") or {}
         if resources:
@@ -942,6 +948,10 @@ class OneGuardWindow(QMainWindow):
             f"Motores · {prepared} preparados · {partial} limitados/no disponibles"
         )
         self.engine_perf_button.setEnabled(bool(self._engine_inventory))
+        self.engine_overview.update_snapshot(
+            self._engine_inventory,
+            (self._latest_performance or {}).get("engines") or {},
+        )
 
     def show_engine_performance(self) -> None:
         """Open the current session inventory alongside observed measurements."""
